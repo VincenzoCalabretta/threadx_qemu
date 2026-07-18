@@ -23,25 +23,45 @@ MEMORY
     SRAM (rwx) : ORIGIN = 0x34000000, LENGTH = 128K
 }
 
+/*
+ * Explicit PHDRS split so binutils doesn't emit a single RWX PT_LOAD
+ * segment (which triggers `ld: warning: ... has a LOAD segment with RWX
+ * permissions` on binutils >= 2.39). Vectors + code + rodata go into an
+ * R+E segment; .data goes into an R+W segment. Both segments still live
+ * inside the SRAM region declared above; PHDRS only affects the ELF
+ * program-header flags a loader sees, not the physical memory layout.
+ *
+ * FLAGS values follow the ELF PF_* bits from the SysV ABI:
+ *   PF_X = 1, PF_W = 2, PF_R = 4  → text = 5 (R+E), data = 6 (R+W).
+ * NOLOAD sections (.bss, .stack) are not assigned a PHDR — they don't
+ * appear in any PT_LOAD segment and the startup code zero-initializes
+ * .bss at boot.
+ */
+PHDRS
+{
+    text PT_LOAD FLAGS(5);
+    data PT_LOAD FLAGS(6);
+}
+
 SECTIONS
 {
     .vectors : {
         KEEP(*(.vectors))
-    } > SRAM
+    } > SRAM :text
 
     .text : {
         *(.text._reset)
         *(.text*)
         *(.rodata*)
         . = ALIGN(4);
-    } > SRAM
+    } > SRAM :text
 
     .data : ALIGN(4) {
         __data_start = .;
         *(.data*)
         . = ALIGN(4);
         __data_end = .;
-    } > SRAM
+    } > SRAM :data
     __data_lma = LOADADDR(.data);
 
     .bss (NOLOAD) : ALIGN(4) {
