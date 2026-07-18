@@ -15,7 +15,6 @@ cc_binary(
     linkopts = [
         "-T$(location :ld/m7_sram.ld)",
         "-nostartfiles",
-        "-Wl,-Map=$(@D)/rdb3_m7_hello.map",
     ],
     additional_linker_inputs = ["ld/m7_sram.ld"],
     target_compatible_with = [
