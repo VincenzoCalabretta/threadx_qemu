@@ -1,0 +1,23 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "hello",
+    srcs = [
+        "main.c",
+        "startup.S",
+        "uart.c",
+        "uart.h",
+    ],
+    additional_linker_inputs = ["qemu_mps2_an500.ld"],
+    linkopts = [
+        "-T$(location :qemu_mps2_an500.ld)",
+        "-nostartfiles",
+    ],
+    target_compatible_with = [
+        "@platforms//os:none",
+        "@platforms//cpu:armv7e-m",
+        "//tools/toolchain/cpp:cortex_m7",
+        "//tools/toolchain/cpp:mps2_an500",
+    ],
+    visibility = ["//visibility:public"],
+)

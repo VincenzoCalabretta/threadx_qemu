@@ -7,11 +7,3 @@ __pycache__/
 
 # Nix-generated t32 config files
 tools/t32/*/config.t32
-
-# Bazel module lockfile (large, regenerated on `bazel mod`).
-MODULE.bazel.lock
-
-# Reference patches + generator kept locally, not tracked.
-workstate.patch
-delta.patch
-scripts/diff_against_patch.py

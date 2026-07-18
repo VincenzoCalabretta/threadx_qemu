@@ -1,0 +1,5 @@
+sh_binary(
+    name = "qemu_run",
+    srcs = ["qemu_run.sh"],
+    visibility = ["//visibility:public"],
+)

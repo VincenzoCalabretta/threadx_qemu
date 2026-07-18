@@ -1,0 +1,62 @@
+package(default_visibility = ["//visibility:public"])
+
+# ---------- Constraints ----------
+
+constraint_setting(name = "soc")
+
+constraint_value(
+    name = "s32g399a",
+    constraint_setting = ":soc",
+)
+
+constraint_setting(name = "cpu_cluster")
+
+constraint_value(
+    name = "cortex_a53",
+    constraint_setting = ":cpu_cluster",
+)
+
+constraint_value(
+    name = "cortex_m7",
+    constraint_setting = ":cpu_cluster",
+)
+
+constraint_setting(name = "board")
+
+constraint_value(
+    name = "mps2_an500",
+    constraint_setting = ":board",
+)
+
+# ---------- Platforms ----------
+
+platform(
+    name = "rdb3_a53",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+        ":s32g399a",
+        ":cortex_a53",
+    ],
+)
+
+platform(
+    name = "rdb3_m7",
+    constraint_values = [
+        "@platforms//os:none",
+        "@platforms//cpu:armv7e-m",
+        ":s32g399a",
+        ":cortex_m7",
+    ],
+)
+
+# QEMU emulates an ARM MPS2+ FPGA image AN500, whose only CPU is a Cortex-M7.
+platform(
+    name = "qemu_mps2_an500_m7",
+    constraint_values = [
+        "@platforms//os:none",
+        "@platforms//cpu:armv7e-m",
+        ":cortex_m7",
+        ":mps2_an500",
+    ],
+)

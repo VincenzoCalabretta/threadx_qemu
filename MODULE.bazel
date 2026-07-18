@@ -1,0 +1,24 @@
+module(
+    name = "threadx_qemu_nix",
+    version = "0.0.1",
+)
+
+bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "rules_cc", version = "0.2.18")
+
+download_arm_gnu_m7_toolchain = use_repo_rule(
+    "//tools/toolchain/cpp:arm_gnu_m7_toolchain.bzl",
+    "download_arm_gnu_m7_toolchain",
+)
+
+download_arm_gnu_m7_toolchain(
+    name = "arm_gnu_m7_toolchain_repo",
+    sha256 = {
+        "aarch64": "d061559d814b205ed30c5b7c577c03317ec447ca51cd5a159d26b12a5bbeb20c",
+        "x86_64": "597893282ac8c6ab1a4073977f2362990184599643b4c5ee34870a8215783a16",
+    },
+    toolchain_name = "arm_gnu_m7_toolchain",
+    version = "15.2.rel1",
+)
+
+register_toolchains("@arm_gnu_m7_toolchain_repo//:arm_gnu_m7_toolchain")
