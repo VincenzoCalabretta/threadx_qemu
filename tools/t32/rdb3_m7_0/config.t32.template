@@ -1,0 +1,17 @@
+; TRACE32 config for S32G399A M7_0 debug on the RDB3.
+; Rendered from tools/t32/rdb3_m7_0/config.t32.template by nix devShell / t32-run.
+; Launch:
+;   t32-run
+
+OS=
+SYS=@T32SYS@
+ID=T32_S32G3_M7_0
+TMP=/tmp
+
+PBI=
+USB
+CONNECTIONMODE=AUTOCONNECT
+
+SCREEN=
+HEADER=S32G399A M7_0
+FONT=SMALL

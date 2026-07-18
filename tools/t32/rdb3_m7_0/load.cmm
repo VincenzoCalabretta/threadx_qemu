@@ -1,0 +1,71 @@
+; Load and run hello-world on S32G399A M7_0 via TRACE32.
+;
+; Adapted from:
+;   t32/demo/arm/hardware/s32g3/s32g3-procevb3/s32g-procevb3-m7/s32g-procevb3_sieve_sram.cmm
+; With empty flash the M7 does not auto-boot; the ON ERROR fallback wakes it
+; via AXI-AP using the vendor's connect script.
+
+WinCLEAR
+
+RESet
+SYStem.CPU S32G399A-M7
+CORE.ASSIGN 1.
+SYStem.CONFIG.DEBUGPORTTYPE JTAG
+SYStem.Option DUALPORT ON
+SYStem.MemAccess DAP
+SYStem.JtagClock 10MHz
+Trace.DISable
+ETM.OFF
+ITM.OFF
+
+; Halt M7_0 in the BootROM before BL2 or any flashed image can run
+SYStem.Option ResBreak ON
+
+; If flash is empty SYStem.Up will fault, fall back to the M7 wake-up script.
+; ~~/ expands to the TRACE32 install root (SYS= in config.t32).
+ON ERROR GOSUB
+(
+  ON ERROR DEFault
+  DO ~~/demo/arm/hardware/s32g3/misc/s32g3_connect_m7_0.cmm
+  RETURN
+)
+SYStem.Up
+
+ON ERROR inherit
+
+; Kill watchdogs and prepare SRAM before loading the image.
+DO ~~/demo/arm/hardware/s32g3/misc/s32g3_disable_watchdog.cmm
+DO ~~/demo/arm/hardware/s32g3/misc/s32g3_init_sram.cmm
+
+; Load ELF from environment variable T32_ELF_PATH (set by wrapper)
+; or fall back to hardcoded path for manual testing.
+PRIVATE &elf_path
+&elf_path=OS.ENV(T32_ELF_PATH)
+
+IF "&elf_path"==""
+(
+  ; Fallback for manual testing - adjust path as needed
+  &elf_path="~~~~/../app.elf"
+  PRINT %WARNING "T32_ELF_PATH not set, using fallback: &elf_path"
+)
+ELSE
+(
+  PRINT "Loading ELF from T32_ELF_PATH: &elf_path"
+)
+
+Data.LOAD.Elf &elf_path
+
+; Point PC at the reset entry and run.
+Go.direct _reset
+WAIT 200.ms
+
+WinCLEAR
+Mode.Hll
+WinPOS 0. 0. 116. 26.
+List.auto
+WinPOS 120. 0. 100. 8.
+Frame.view
+WinPOS 120. 14.
+Register.view
+
+ENDDO

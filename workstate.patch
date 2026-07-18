@@ -1,0 +1,1737 @@
+diff --git a/.bazelrc b/.bazelrc
+index 8fe57d59f..34999c107 100644
+--- a/.bazelrc
++++ b/.bazelrc
+@@ -74,9 +74,15 @@ run:perf --config=deb --run_under="${BUILD_WORKSPACE_DIRECTORY}/tools/scripts/pe
+ run:debugpy --run_under=//tools/toolchain/python/debugpy
+ 
+ # Targets the rdb3 platform and registers the yocto toolchain
+-# `register_toolchains` can't be used in cpp.MODULE.bzl otherwise the toolchain will be downloaded every time
++# `register_toolchains` can't be used in cpp.MODULE.bazel otherwise the toolchain will be downloaded every time
+ # Ref: https://stackoverflow.com/questions/78122191/bazel-its-possible-to-download-different-external-dependencies-depending-on-the
+-build:rdb3 --platforms=//tools/toolchain/cpp:rdb3 --extra_toolchains=@cortexa53_fsl_linux_gcc_toolchain//:dev_cortexa53_fsl_linux_gcc_toolchain
++build:rdb3 --platforms=//tools/toolchain/cpp:rdb3_a53 --extra_toolchains=@cortexa53_fsl_linux_gcc_toolchain//:dev_cortexa53_fsl_linux_gcc_toolchain
++
++# M7 debugging with Lauterbach T32
++# Builds for Cortex-M7 bare-metal and launches T32 debugger
++# Usage: bazel run --config=m7_debug //rdb3_bringup_src:rdb3_m7_hello
++run:m7_debug --platforms=//tools/toolchain/cpp:rdb3_m7
++run:m7_debug --run_under=//tools/t32:t32_run_under
+ 
+ # Build settings aliases and features
+ # TODO(#55,#692): remove the flag here and use Node.timing_policy at tools/coder/user_model/user_model.py:210
+diff --git a/.gitignore b/.gitignore
+index 824a41b57..fb46f53ec 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -85,3 +85,6 @@ nyx_state_machine/outputs/*
+ # Profiling results
+ profile.out
+ profile.callgrind
++
++# Nix-generated t32 config files
++tools/t32/*/config.t32
+diff --git a/flake.lock b/flake.lock
+index d3af223d5..595b01fce 100644
+--- a/flake.lock
++++ b/flake.lock
+@@ -1,24 +1,72 @@
+ {
+   "nodes": {
++    "flake-utils": {
++      "inputs": {
++        "systems": "systems"
++      },
++      "locked": {
++        "lastModified": 1731533236,
++        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
++        "owner": "numtide",
++        "repo": "flake-utils",
++        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
++        "type": "github"
++      },
++      "original": {
++        "owner": "numtide",
++        "repo": "flake-utils",
++        "type": "github"
++      }
++    },
+     "nixpkgs": {
+       "locked": {
+-        "lastModified": 1773705440,
+-        "narHash": "sha256-xB30bbAp0e7ogSEYyc126mAJMt4FRFh8wtm6ADE1xuM=",
+-        "owner": "nixos",
++        "lastModified": 1784007870,
++        "narHash": "sha256-djcLt/JJphyNt4eDY9XTly+/WbCK5lqWq9lSgCmJkkQ=",
++        "owner": "NixOS",
+         "repo": "nixpkgs",
+-        "rev": "48652e9d5aea46e555b3df87354280d4f29cd3a3",
++        "rev": "18b9261cb3294b6d2a06d03f96872827b8fe2698",
+         "type": "github"
+       },
+       "original": {
+-        "owner": "nixos",
+-        "ref": "nixos-25.11",
++        "owner": "NixOS",
++        "ref": "nixos-unstable",
+         "repo": "nixpkgs",
+         "type": "github"
+       }
+     },
+     "root": {
+       "inputs": {
+-        "nixpkgs": "nixpkgs"
++        "flake-utils": "flake-utils",
++        "nixpkgs": "nixpkgs",
++        "trace32-installer": "trace32-installer"
++      }
++    },
++    "systems": {
++      "locked": {
++        "lastModified": 1681028828,
++        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
++        "owner": "nix-systems",
++        "repo": "default",
++        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
++        "type": "github"
++      },
++      "original": {
++        "owner": "nix-systems",
++        "repo": "default",
++        "type": "github"
++      }
++    },
++    "trace32-installer": {
++      "flake": false,
++      "locked": {
++        "lastModified": 1784119128,
++        "narHash": "sha256-0wALE+0pgugoWBYrazH7IzgM1CAlDlQWslTS8ZzILSU=",
++        "path": "/opt/trace32-installer",
++        "type": "path"
++      },
++      "original": {
++        "path": "/opt/trace32-installer",
++        "type": "path"
+       }
+     }
+   },
+diff --git a/flake.nix b/flake.nix
+index 060768cb4..fdec3d171 100644
+--- a/flake.nix
++++ b/flake.nix
+@@ -1,21 +1,89 @@
+ {
+-  description = "Dev environment for thesis development";
++  description = "Dev environment for NYX development on Linux x86 machines";
+ 
+-  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
++  inputs = {
++    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
++    flake-utils.url = "github:numtide/flake-utils";
+ 
+-  outputs = {nixpkgs, ...}: let
+-    # List of supported systems
+-    systems = ["x86_64-linux" "aarch64-darwin"];
++    # The TRACE32 installer directory.
++    # One-time setup on a new machine:
++    #   sudo mv /path/to/untarred-trace32-installer /opt/trace32-installer
++    # The directory must stay in place as every `nix develop` re-hashes it.
++    # To override for a different location:
++    #   nix develop --override-input trace32-installer path:/absolute/path/to/installer
++    trace32-installer = {
++      url = "path:/opt/trace32-installer";
++      flake = false;
++    };
++  };
+ 
+-    # Helper function to apply an attribute set to all supported systems
+-    # Type: forAllSystems :: (system -> AttrSet) -> AttrSet
+-    forAllSystems = nixpkgs.lib.genAttrs systems;
+-  in {
+-    devShells = forAllSystems (system: {
+-      default = let
++  outputs = { self, nixpkgs, flake-utils, trace32-installer }:
++    flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
++      let
+         pkgs = import nixpkgs {
+-            inherit system;
++          inherit system;
++          config.allowUnfree = true;
++        };
++
++        trace32 = pkgs.callPackage ./tools/t32/trace32.nix {
++          src = trace32-installer;
+         };
++
++        # Render <target-dir>/config.t32 from its template and invoke t32marm.
++        # Accepts either:
++        #   t32-run <target-dir>              - for manual use
++        #   t32-run <elf-path> <target-dir>   - for Bazel integration
++        # The render step ensures the LB script points to the nix-managed LB binary.
++        # When an ELF path is provided, it's passed via T32_ELF_PATH env var.
++        t32-run = pkgs.writeShellApplication {
++          name = "t32-run";
++          runtimeInputs = [ trace32 pkgs.gnused pkgs.coreutils ];
++          text = ''
++            if [ $# -lt 1 ]; then
++              echo "Usage: t32-run <target-dir>" >&2
++              echo "   or: t32-run <elf-path> <target-dir>" >&2
++              echo "" >&2
++              echo "  <target-dir> must contain config.t32.template and load.cmm" >&2
++              echo "  <elf-path> is passed to load.cmm via T32_ELF_PATH env var" >&2
++              exit 1
++            fi
++
++            # Detect if first arg is an ELF file or a directory
++            if [ -f "$1" ] && [ $# -ge 2 ]; then
++              # Two-argument form: <elf-path> <target-dir>
++              elf_path="$(realpath "$1")"
++              target_dir="$2"
++              export T32_ELF_PATH="$elf_path"
++              echo "T32: Loading ELF from $elf_path"
++            elif [ -d "$1" ]; then
++              # One-argument form: <target-dir>
++              target_dir="$1"
++            else
++              echo "Error: Invalid arguments. First arg must be a directory or ELF file." >&2
++              exit 1
++            fi
++
++            if [ ! -d "$target_dir" ]; then
++              echo "t32-run: not a directory: $target_dir" >&2
++              exit 1
++            fi
++            if [ ! -f "$target_dir/config.t32.template" ]; then
++              echo "t32-run: missing config.t32.template in $target_dir" >&2
++              exit 1
++            fi
++            if [ ! -f "$target_dir/load.cmm" ]; then
++              echo "t32-run: missing load.cmm in $target_dir" >&2
++              exit 1
++            fi
++
++            sed "s#@T32SYS@#${trace32}#g" \
++              "$target_dir/config.t32.template" > "$target_dir/config.t32"
++            exec ${trace32}/bin/t32marm \
++              -c "$target_dir/config.t32" \
++              -s "$target_dir/load.cmm"
++          '';
++        };
++
+         bazel-wrapper = pkgs.writeScriptBin "bazel" ''
+           #!/usr/bin/env bash
+ 
+@@ -30,33 +98,64 @@
+               --bazelrc=$repo_root/.bazelrc.nix-shell \
+               "$@"
+         '';
+-      in
+-        pkgs.mkShell {
+-          packages = with pkgs; [
++      in {
++        packages = {
++          inherit trace32 t32-run;
++          default = trace32;
++        };
++
++        devShells.default = pkgs.mkShell {
++          packages = [
+             # Python
+-            python313
+-            uv
+-            ty
++            pkgs.python313
++            pkgs.uv
++            pkgs.ty
+ 
+             # C++ compilation
+-            gcc
+-            binutils
+-            zlib
+-            cbmc
++            pkgs.gcc
++            pkgs.binutils
++            pkgs.zlib
++            pkgs.cbmc
+ 
+             # Other tools
+-            clang-tools
++            pkgs.clang-tools
+             bazel-wrapper
+-            pre-commit
+-            coreutils
++            pkgs.pre-commit
++            pkgs.coreutils
++
++            # ARM embedded toolchain and debugging
++            pkgs.gcc-arm-embedded # arm-none-eabi-*
++            pkgs.gnumake
++            pkgs.gdb # host gdb
++            trace32
++            t32-run
+           ];
++
+           shellHook = ''
++            export T32SYS="${trace32}"
++
++            # Render tools/t32/<target>/config.t32 for every target so SYS= points into the nix store.
++            for tmpl in tools/t32/*/config.t32.template; do
++              [ -f "$tmpl" ] || continue
++              ${pkgs.gnused}/bin/sed "s#@T32SYS@#$T32SYS#g" "$tmpl" > "''${tmpl%.template}"
++            done
++
+             if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+               git config --local core.commentChar ';' >/dev/null 2>&1 || true
+               pre-commit install
+             fi
++
++            cat <<EOF
++            Welcome to NYX dev shell
++            EOF
+           '';
+         };
+-    });
+-  };
++
++        # t32 sanity check
++        checks.trace32-exists = pkgs.runCommand "trace32-exists" { } ''
++          test -x ${trace32}/bin/t32marm
++          test -f ${trace32}/config.t32
++          touch $out
++        '';
++      });
+ }
+diff --git a/rdb3_bringup_src/BUILD.bazel b/rdb3_bringup_src/BUILD.bazel
+new file mode 100644
+index 000000000..63827867f
+--- /dev/null
++++ b/rdb3_bringup_src/BUILD.bazel
+@@ -0,0 +1,28 @@
++# (c) The Exploration Company
++
++load("@rules_cc//cc:defs.bzl", "cc_binary")
++
++cc_binary(
++    name = "rdb3_m7_hello",
++    srcs = [
++        "src/main.c",
++        "src/clock.c",
++        "src/pinmux.c",
++        "src/uart.c",
++        "src/startup.S",
++        "src/s32g3_regs.h",
++    ],
++    linkopts = [
++        "-T$(location :ld/m7_sram.ld)",
++        "-nostartfiles",
++        "-Wl,-Map=$(@D)/rdb3_m7_hello.map",
++    ],
++    additional_linker_inputs = ["ld/m7_sram.ld"],
++    target_compatible_with = [
++        "@platforms//os:none",
++        "@platforms//cpu:armv7e-m",
++        "//tools/toolchain/cpp:s32g399a",
++        "//tools/toolchain/cpp:cortex_m7",
++    ],
++    visibility = ["//visibility:public"],
++)
+diff --git a/rdb3_bringup_src/ld/m7_sram.ld b/rdb3_bringup_src/ld/m7_sram.ld
+new file mode 100644
+index 000000000..c0973a456
+--- /dev/null
++++ b/rdb3_bringup_src/ld/m7_sram.ld
+@@ -0,0 +1,60 @@
++/*
++ * S32G3 M7_0 SRAM link script.
++ *
++ * ORIGIN 0x34000000 is the Internal SRAM region of the S32G3 memory
++ * map from RM attachment S32G3_memory_map.xlsx sheet
++ * "Overview Memory Map 40bit" row 51: 0x34000000 - 0x353FFFFF, 20 MB.
++ *
++ * LENGTH 128 KB matches the Lauterbach S32G3 M7 demo makefile
++ *   ~/t32/demo/arm/hardware/s32g3/s32g3-procevb3/s32g-procevb3-m7/makefile
++ *   RAMSTART = 0x34000000
++ *   RAMSIZE  = 0x20000
++ *
++ * SRAMC ECC requires the region to be initialized  before the
++ * first read; the load script t32/load_m7_0.cmm runs
++ * ~/t32/demo/arm/hardware/s32g3/misc/s32g3_init_sram.cmm to do that before
++ * Data load.
++ */
++
++ENTRY(_reset)
++
++MEMORY
++{
++    SRAM (rwx) : ORIGIN = 0x34000000, LENGTH = 128K
++}
++
++SECTIONS
++{
++    .vectors : {
++        KEEP(*(.vectors))
++    } > SRAM
++
++    .text : {
++        *(.text._reset)
++        *(.text*)
++        *(.rodata*)
++        . = ALIGN(4);
++    } > SRAM
++
++    .data : ALIGN(4) {
++        __data_start = .;
++        *(.data*)
++        . = ALIGN(4);
++        __data_end = .;
++    } > SRAM
++    __data_lma = LOADADDR(.data);
++
++    .bss (NOLOAD) : ALIGN(4) {
++        __bss_start = .;
++        *(.bss*)
++        *(COMMON)
++        . = ALIGN(4);
++        __bss_end = .;
++    } > SRAM
++
++    .stack (NOLOAD) : ALIGN(8) {
++        . = . + 4K;
++        . = ALIGN(8);
++        __stack_top = .;
++    } > SRAM
++}
+diff --git a/rdb3_bringup_src/src/clock.c b/rdb3_bringup_src/src/clock.c
+new file mode 100644
+index 000000000..508914699
+--- /dev/null
++++ b/rdb3_bringup_src/src/clock.c
+@@ -0,0 +1,25 @@
++#include "s32g3_regs.h"
++
++/*
++ * Set MC_CGM_0 clock mux 8 LIN_BAUD_CLK feeder to FIRC = 48 MHz.
++ *
++ * Post-reset MUX_8 already selects FIRC
++ * SELCTL reset value = 0,
++ * REF: per RM- 25.5.6 p951,
++ * but S32G3 BootROM re-programs this mux when it tries XOSC
++ * REF: RM 31.12.4.2 p1351:
++ * "BootROM uses XOSC as clock source for LIN_BAUD_CLK during boot.
++ *  If XOSC fails to initialize, FIRC is selected
++ *  as the MUX source.".
++ *
++ * Independently from state we halt in, we set the clock mux back to
++ * FIRC explicitly so the LINFlexD baud calc in uart.c has a known input.
++ *
++ * Clock source encoding SELCTL = 0 -> FIRC_CLK from RM 24.3.1 Table 78 p884.
++ *  SWIP poll is per RM 25.5.7 p954.
++ */
++void clock_init(void)
++{
++    MC_CGM_MUX8_CSC = MUX_CSC_SELCTL(0) | MUX_CSC_CLK_SW;
++    while (MC_CGM_MUX8_CSS & MUX_CSS_SWIP) { }
++}
+diff --git a/rdb3_bringup_src/src/main.c b/rdb3_bringup_src/src/main.c
+new file mode 100644
+index 000000000..af4ac6d7c
+--- /dev/null
++++ b/rdb3_bringup_src/src/main.c
+@@ -0,0 +1,17 @@
++/*
++ * Top-level bring-up for the S32G399A M7_0 hello-world.
++ */
++
++extern void clock_init(void);
++extern void pinmux_init(void);
++extern void uart_init(void);
++extern void uart_puts(const char *s);
++
++int main(void)
++{
++    clock_init();
++    pinmux_init();
++    uart_init();
++    uart_puts("hello world from M7_0\r\n");
++    for (;;) { }
++}
+diff --git a/rdb3_bringup_src/src/pinmux.c b/rdb3_bringup_src/src/pinmux.c
+new file mode 100644
+index 000000000..c56098d41
+--- /dev/null
++++ b/rdb3_bringup_src/src/pinmux.c
+@@ -0,0 +1,32 @@
++#include "s32g3_regs.h"
++
++/*
++ * RDB3 UART0 USB port physical wiring
++ *   FT232RQ USB-UART bridge -> pads PC_09 (TX) and PC_10 (RX)
++ *   REF: reference_docs/S32G-VNP-RDB3_DesignFiles/Schematic/SPF-53060_F.pdf,
++ *        page 26 ("UART" sheet).
++ *    The SoC diagram shows these pads with the alt-function "PFE_UART_TX/RX"
++ *    but this is only one of the several alt functions the pad carry.
++ *
++ * S32G3 pad numbering according to RM convention: PA_00..PA_15 = 0..15,
++ *   PB_00..PB_15 = 16..31, so PC_09 = 32 + 9 = 41, PC_10 = 42.
++ *
++ *   This is confirmed by BootROM's serial-boot UART assignment
++ *   REF: RM 31.12.4.1 Table 179 p1351 "RX = PAD[42], TX = PAD[41], LINFlexD_0 
++ *        in UART mode."
++ *
++ * Alternate function values  taken from the S32G3_IOMUX.xlsx embedded in
++ * the RM PDF, sheet "IO Signal Table":
++ *   Row 316:  MSCR[41]  SSS = 0b001  ->  LIN0_TX (LINFlex_0)
++ *   Row 326:  MSCR[42]  base pad entry (IBE only, no output alt used)
++ *   Row 329:  IMCR[0]   SSS = 0b010  ->  LIN0_RX sourced from PC_10
++ *
++ * MSCR field diagram:
++ * REF: RM 16.3.12 (p642).  IMCR is a an alternate function register.
++ */
++void pinmux_init(void)
++{
++    SIUL2_MSCR(41) = MSCR_OBE | MSCR_SSS(1);   /* PC_09 drives LIN0_TX */
++    SIUL2_MSCR(42) = MSCR_IBE;                  /* PC_10 as input to pad */
++    SIUL2_IMCR(0)  = MSCR_SSS(2);               /* LIN0_RX from PC_10    */
++}
+diff --git a/rdb3_bringup_src/src/s32g3_regs.h b/rdb3_bringup_src/src/s32g3_regs.h
+new file mode 100644
+index 000000000..1d5681c37
+--- /dev/null
++++ b/rdb3_bringup_src/src/s32g3_regs.h
+@@ -0,0 +1,79 @@
++#ifndef S32G3_REGS_H
++#define S32G3_REGS_H
++
++/*
++ * All addresses and bit fields on this page are taken from RM attachment 
++ * S32G3_memory_map.xlsx. (Revision 5).
++ *
++ * "RM x.y.z (pN)" citations use the section number and page number.
++ */
++
++#include <stdint.h>
++
++#define REG32(a) (*(volatile uint32_t *)(a))
++
++/*
++ * SIUL2_0 System Integration Unit Lite 2, Chip Configuration bus
++ *   Base:            0x4009_C000       RM 16.3.1 (p603)
++ *   MSCRa offset:    0x240 + a * 4     RM 16.3.12 (p641)
++ *   IMCRb offset:    0xA40 + b * 4     RM 16.3.13 (p645)
++ */
++#define SIUL2_0_BASE       0x4009C000u
++#define SIUL2_MSCR(n)      REG32(SIUL2_0_BASE + 0x240u + (n) * 4u)
++#define SIUL2_IMCR(n)      REG32(SIUL2_0_BASE + 0xA40u + (n) * 4u)
++
++/* MSCR field diagram RM 16.3.12 (p642) */
++#define MSCR_OBE           (1u << 21)         /* Output Buffer Enable */
++#define MSCR_IBE           (1u << 19)         /* Input  Buffer Enable */
++#define MSCR_SSS(x)        ((x) & 0x7u)       /* Source Signal Select, per IOMUX xlsx */
++
++/*
++ * MC_CGM_0 Clock Generation Module 0
++ *   Base:            0x4003_0000       RM 25.5.1 (p946)
++ *   Mux 8 feeds LIN_BAUD_CLK           RM 24.3.2.1 Table 79 (p887)
++ *                                      RM 24.7.2.9 Figure 102 (p927)
++ *   MUX_8_CSC offset 0x500             RM 25.5.1 memory map (p947)
++ *   MUX_8_CSS offset 0x504             RM 25.5.1 memory map (p947)
++ *   SELCTL clock-source encoding       RM 24.3.1 Table 78 (p884): 0 = FIRC_CLK
++ */
++#define MC_CGM_0_BASE      0x40030000u
++#define MC_CGM_MUX8_CSC    REG32(MC_CGM_0_BASE + 0x500u)
++#define MC_CGM_MUX8_CSS    REG32(MC_CGM_0_BASE + 0x504u)
++
++/* CSC/CSS field layout RM 25.5.6 (p951) and 25.5.7 (p953) */
++#define MUX_CSC_CLK_SW     (1u << 2)          /* trigger clock switch */
++#define MUX_CSC_SELCTL(x)  (((x) & 0xFu) << 24)
++#define MUX_CSS_SWIP       (1u << 16)         /* switch in progress */
++#define MUX_CSS_SELSTAT(v) (((v) >> 24) & 0xFu)
++
++/*
++ * LINFlexD_0 LIN/UART controller
++ *   Base:            0x401C_8000       RM 49.5.1 (p2490)
++ *   Register offsets                   RM Table (p2491)
++ */
++#define LINFLEXD0_BASE     0x401C8000u
++#define LINCR1             REG32(LINFLEXD0_BASE + 0x00u)   /* RM 49.5.2 (p2491) */
++#define UARTCR             REG32(LINFLEXD0_BASE + 0x10u)   /* RM 49.5.6 (p2502) */
++#define UARTSR             REG32(LINFLEXD0_BASE + 0x14u)   /* RM 49.5.7 (p2508) */
++#define LINFBRR            REG32(LINFLEXD0_BASE + 0x24u)   /* RM 49.5.11 (p2514) */
++#define LINIBRR            REG32(LINFLEXD0_BASE + 0x28u)   /* RM 49.5.12 (p2515) */
++#define BDRL               REG32(LINFLEXD0_BASE + 0x38u)   /* RM Table (p2491) */
++
++/* LINCR1 field diagram RM 49.5.2 (p2492).
++ * Reset value 0x0082: bit 7 is a reserved bit whose reset value is 1 and the
++ * RM notes "each reserved bit must be written to its original reset value". */
++#define LINCR1_INIT        (1u << 0)          /* Initialization Mode Request */
++#define LINCR1_SLEEP       (1u << 1)          /* Sleep Mode Request           */
++#define LINCR1_RESERVED_1  (1u << 7)          /* reset = 1, must preserve     */
++
++/* UARTCR field diagram RM 49.5.6 (p2503).
++ * WL1:WL0 = 01 with PCE=0 selects 8 data bits, no parity (Table p2506). */
++#define UARTCR_UART        (1u << 0)          /* UART mode (else LIN)         */
++#define UARTCR_WL0         (1u << 1)          /* Word Length bit 0            */
++#define UARTCR_TxEn        (1u << 4)          /* Transmitter enable           */
++#define UARTCR_RxEn        (1u << 5)          /* Receiver enable              */
++
++/* UARTSR RM 49.5.7 p2510. DTFTFF is W1C in buffer mode. */
++#define UARTSR_DTFTFF      (1u << 1)          /* Data Transmission Completed  */
++
++#endif
+diff --git a/rdb3_bringup_src/src/startup.S b/rdb3_bringup_src/src/startup.S
+new file mode 100644
+index 000000000..f511ece61
+--- /dev/null
++++ b/rdb3_bringup_src/src/startup.S
+@@ -0,0 +1,84 @@
++/*
++ * Minimal Cortex-M7 startup for S32G3 M7_0, executing from Internal SRAM
++ * linked at 0x34000000.
++ *
++ * Vector-table layout is defined by the
++ * ARMv7-M Architecture Reference Manual ARM DDI 0403, section B1.5.2
++ *
++ * VTOR register at 0xE000_ED08 is the ARMv7-M Vector Table Offset
++ * Register ARM DDI 0403 B3.2.5. 
++ * On reset it points into the ROM vector table;
++ * The script redirects it to the SRAM copy after setting SP.
++ *
++ * SRAM base 0x34000000 is the Internal SRAM window per S32G3
++ * memory-map attachment S32G3_memory_map.xlsx sheet
++ * "Overview Memory Map 40bit" row 51 (20 MB region 0x34000000-0x353FFFFF).
++ * This is the same base the Lauterbach S32G3 M7 demo uses 
++ * (see ~/t32/demo/arm/hardware/s32g3/misc/s32g3_enable_m7_0.cmm and in the
++ * demo makefile RAMSTART=0x34000000).
++ */
++
++    .syntax unified
++    .thumb
++
++    .section .vectors, "a", %progbits
++    .align 2
++    .global _vectors
++_vectors:
++    .word   __stack_top          /* 0x00 initial SP */
++    .word   _reset+1             /* 0x04 Reset */
++    .word   _hang+1              /* 0x08 NMI */
++    .word   _hang+1              /* 0x0C HardFault */
++    .word   _hang+1              /* 0x10 MemManage */
++    .word   _hang+1              /* 0x14 BusFault */
++    .word   _hang+1              /* 0x18 UsageFault */
++    .word   0
++    .word   0
++    .word   0
++    .word   0
++    .word   _hang+1              /* 0x2C SVCall */
++    .word   0
++    .word   0
++    .word   _hang+1              /* 0x38 PendSV */
++    .word   _hang+1              /* 0x3C SysTick */
++
++    .section .text._reset, "ax", %progbits
++    .thumb_func
++    .global _reset
++_reset:
++    ldr     r0, =__stack_top
++    mov     sp, r0
++
++    /* Point VTOR at our vector table (ARM DDI 0403 B3.2.5). */
++    ldr     r0, =0xE000ED08
++    ldr     r1, =_vectors
++    str     r1, [r0]
++
++    /* copy .data from LMA to VMA */
++    ldr     r0, =__data_lma
++    ldr     r1, =__data_start
++    ldr     r2, =__data_end
++1:  cmp     r1, r2
++    beq     2f
++    ldr     r3, [r0], #4
++    str     r3, [r1], #4
++    b       1b
++2:
++
++    /* zero .bss */
++    ldr     r0, =__bss_start
++    ldr     r1, =__bss_end
++    movs    r2, #0
++3:  cmp     r0, r1
++    beq     4f
++    str     r2, [r0], #4
++    b       3b
++4:
++
++    bl      main
++    b       _hang
++
++    .thumb_func
++    .global _hang
++_hang:
++    b       _hang
+diff --git a/rdb3_bringup_src/src/uart.c b/rdb3_bringup_src/src/uart.c
+new file mode 100644
+index 000000000..fc5146810
+--- /dev/null
++++ b/rdb3_bringup_src/src/uart.c
+@@ -0,0 +1,44 @@
++#include "s32g3_regs.h"
++
++/*
++ * LINFlexD_0 in UART mode, 115200 8N1, buffer non-FIFO mode, polled TX.
++ *
++ * Init sequence per RM 49.4.4 p2474 "UART mode" and 49.5.6 p2503
++ * UARTCR field descriptions.
++ *
++ * Baud calc: LDIV = f_LIN_BAUD_CLK / (16 * baud).  With clock_init()
++ * setting MC_CGM_0 mux 8 to FIRC, f = 48 MHz:
++ *   LDIV = 48_000_000 / (16 * 115200) = 26.0416
++ *   LINIBRR = 26, LINFBRR = 1   ->  effective 115_108 baud
++*
++ * Also, RM 31.12.4.3 Table 180 p1351 lists 48 MHz (FIRC) ->
++ * 115200 Bd as a supported baud/clock pair for LINFlexD_0.
++ *
++ * uart_putc uses buffer mode, write byte to BDRL, poll UARTSR.DTFTFF
++ * then W1C the flag.  DTFTFF is W1C in buffer mode but read-only in FIFO mode
++ * RM 49.5.7 p2508.
++ */
++void uart_init(void)
++{
++    LINCR1  = LINCR1_RESERVED_1 | LINCR1_INIT;
++    UARTCR  = UARTCR_UART; 
++    UARTCR  = UARTCR_UART | UARTCR_WL0
++            | UARTCR_TxEn | UARTCR_RxEn;
++    LINIBRR = 26;
++    LINFBRR = 1;
++    LINCR1  = LINCR1_RESERVED_1;
++}
++
++void uart_putc(char c)
++{
++    BDRL = (uint32_t)(uint8_t)c;
++    while ((UARTSR & UARTSR_DTFTFF) == 0) { }
++    UARTSR = UARTSR_DTFTFF;
++}
++
++void uart_puts(const char *s)
++{
++    while (*s) {
++        uart_putc(*s++);
++    }
++}
+diff --git a/tools/t32/BUILD.bazel b/tools/t32/BUILD.bazel
+new file mode 100644
+index 000000000..c27bf4657
+--- /dev/null
++++ b/tools/t32/BUILD.bazel
+@@ -0,0 +1,7 @@
++# (c) The Exploration Company
++
++sh_binary(
++    name = "t32_run_under",
++    srcs = ["t32_run_under.sh"],
++    visibility = ["//visibility:public"],
++)
+diff --git a/tools/t32/rdb3_m7_0/config.t32.template b/tools/t32/rdb3_m7_0/config.t32.template
+new file mode 100644
+index 000000000..3adddf6ba
+--- /dev/null
++++ b/tools/t32/rdb3_m7_0/config.t32.template
+@@ -0,0 +1,17 @@
++; TRACE32 config for S32G399A M7_0 debug on the RDB3.
++; Rendered from tools/t32/rdb3_m7_0/config.t32.template by nix devShell / t32-run.
++; Launch:
++;   t32-run
++
++OS=
++SYS=@T32SYS@
++ID=T32_S32G3_M7_0
++TMP=/tmp
++
++PBI=
++USB
++CONNECTIONMODE=AUTOCONNECT
++
++SCREEN=
++HEADER=S32G399A M7_0
++FONT=SMALL
+diff --git a/tools/t32/rdb3_m7_0/load.cmm b/tools/t32/rdb3_m7_0/load.cmm
+new file mode 100644
+index 000000000..f64ee3ad7
+--- /dev/null
++++ b/tools/t32/rdb3_m7_0/load.cmm
+@@ -0,0 +1,71 @@
++; Load and run hello-world on S32G399A M7_0 via TRACE32.
++;
++; Adapted from:
++;   t32/demo/arm/hardware/s32g3/s32g3-procevb3/s32g-procevb3-m7/s32g-procevb3_sieve_sram.cmm
++; With empty flash the M7 does not auto-boot; the ON ERROR fallback wakes it
++; via AXI-AP using the vendor's connect script.
++
++WinCLEAR
++
++RESet
++SYStem.CPU S32G399A-M7
++CORE.ASSIGN 1.
++SYStem.CONFIG.DEBUGPORTTYPE JTAG
++SYStem.Option DUALPORT ON
++SYStem.MemAccess DAP
++SYStem.JtagClock 10MHz
++Trace.DISable
++ETM.OFF
++ITM.OFF
++
++; Halt M7_0 in the BootROM before BL2 or any flashed image can run
++SYStem.Option ResBreak ON
++
++; If flash is empty SYStem.Up will fault, fall back to the M7 wake-up script.
++; ~~/ expands to the TRACE32 install root (SYS= in config.t32).
++ON ERROR GOSUB
++(
++  ON ERROR DEFault
++  DO ~~/demo/arm/hardware/s32g3/misc/s32g3_connect_m7_0.cmm
++  RETURN
++)
++SYStem.Up
++
++ON ERROR inherit
++
++; Kill watchdogs and prepare SRAM before loading the image.
++DO ~~/demo/arm/hardware/s32g3/misc/s32g3_disable_watchdog.cmm
++DO ~~/demo/arm/hardware/s32g3/misc/s32g3_init_sram.cmm
++
++; Load ELF from environment variable T32_ELF_PATH (set by wrapper)
++; or fall back to hardcoded path for manual testing.
++PRIVATE &elf_path
++&elf_path=OS.ENV(T32_ELF_PATH)
++
++IF "&elf_path"==""
++(
++  ; Fallback for manual testing - adjust path as needed
++  &elf_path="~~~~/../app.elf"
++  PRINT %WARNING "T32_ELF_PATH not set, using fallback: &elf_path"
++)
++ELSE
++(
++  PRINT "Loading ELF from T32_ELF_PATH: &elf_path"
++)
++
++Data.LOAD.Elf &elf_path
++
++; Point PC at the reset entry and run.
++Go.direct _reset
++WAIT 200.ms
++
++WinCLEAR
++Mode.Hll
++WinPOS 0. 0. 116. 26.
++List.auto
++WinPOS 120. 0. 100. 8.
++Frame.view
++WinPOS 120. 14.
++Register.view
++
++ENDDO
+diff --git a/tools/t32/t32_run_under.sh b/tools/t32/t32_run_under.sh
+new file mode 100644
+index 000000000..3af62b9fc
+--- /dev/null
++++ b/tools/t32/t32_run_under.sh
+@@ -0,0 +1,55 @@
++#!/usr/bin/env bash
++# (c) The Exploration Company
++#
++# Wrapper for bazel run --run_under with Lauterbach T32.
++# This script bridges Bazel's build sandbox with the Nix-provided t32-run tool.
++#
++# Usage (via Bazel):
++#   bazel run --run_under=//tools/t32:t32_run_under //target:binary
++#   bazel run --config=m7_debug //rdb3_bringup_src:rdb3_m7_hello
++#
++# Bazel passes the built binary path as the last argument.
++# We extract it and pass it to t32-run which sets T32_ELF_PATH for load.cmm.
++
++set -euo pipefail
++
++# Last argument is the ELF path from Bazel's sandbox
++ELF_PATH="${@: -1}"
++
++# Verify the ELF exists
++if [[ ! -f "$ELF_PATH" ]]; then
++    echo "Error: ELF not found at $ELF_PATH" >&2
++    exit 1
++fi
++
++# Resolve to absolute path
++ELF_ABS="$(realpath "$ELF_PATH")"
++
++# T32 script directory for M7_0 target
++T32_DIR="tools/t32/rdb3_m7_0"
++
++if [[ ! -d "$T32_DIR" ]]; then
++    echo "Error: T32 directory not found: $T32_DIR" >&2
++    echo "Make sure you're running from the workspace root." >&2
++    exit 1
++fi
++
++echo "==========================================================="
++echo "Lauterbach T32 Debug Session"
++echo "==========================================================="
++echo "ELF Binary: $ELF_ABS"
++echo "Target:     S32G399A M7_0"
++echo "Platform:   RDB3"
++echo "==========================================================="
++echo ""
++
++# Check if t32-run is available (from Nix shell)
++if ! command -v t32-run &> /dev/null; then
++    echo "Error: t32-run not found in PATH" >&2
++    echo "Make sure you're in the Nix development shell:" >&2
++    echo "  nix develop" >&2
++    exit 1
++fi
++
++# Launch T32 via the Nix wrapper, passing ELF path and target directory
++exec t32-run "$ELF_ABS" "$T32_DIR"
+diff --git a/tools/t32/trace32.nix b/tools/t32/trace32.nix
+new file mode 100644
+index 000000000..e8cc1feaa
+--- /dev/null
++++ b/tools/t32/trace32.nix
+@@ -0,0 +1,234 @@
++# (c) The Exploration Company
++#
++# Nix expression that sets up lauterbach t32 in the nix environment
++# The following instructions provide a set of commands that were used
++# to analyze the dependencies in case this expression may need to be updated
++# in the future.
++#
++# Direct runtime dependencies on the main .t32marm-wrapped binary
++# ```
++# readelf -d files/bin/pc_linux64/t32marm | grep NEEDED
++# ```
++#
++# Direct runtime dependencies on the qt6 shim t32screenqt6.so
++# ```
++# readelf -d files/bin/pc_linux64/t32screenqt6.so | grep NEEDED
++# ```
++#
++# Transitive misses detected trough autoPatchelfHook
++# ```
++# nix build .#trace32 2>&1 | grep -E "not satisfied|dependency .* not found"
++# ```
++# dlopen candidates from strings grepped the main elf
++# ```
++# strings files/bin/pc_linux64/.t32marm-wrapped | grep -E '\.so(\.[0-9]+)?$'
++# ```
++
++
++{ stdenv
++, lib
++, autoPatchelfHook
++, makeWrapper
++, glibc
++, gcc-unwrapped
++, openssl
++, curl
++, brotli
++, libkrb5
++, libssh2
++, zstd
++, libunistring
++, libidn2
++, libpsl
++, nghttp2
++, libnghttp3 ? null
++, ngtcp2 ? null
++, libuuid
++, keyutils
++, e2fsprogs
++, freetype
++, fontconfig
++, harfbuzz
++, icu
++, libpng
++, xorg
++, libxkbcommon
++, dbus
++, glib
++, expat
++, systemdLibs
++, liburing
++, libGL
++, libglvnd
++, qt6
++, bzip2
++, zlib
++, libb2
++, double-conversion
++, pcre2
++, md4c
++, graphite2
++, src
++}:
++
++stdenv.mkDerivation {
++  pname = "trace32";
++  version = "R.2026.02.000190766";
++  inherit src;
++
++  nativeBuildInputs = [ autoPatchelfHook makeWrapper ];
++
++  buildInputs = [
++    glibc
++    gcc-unwrapped.lib
++    openssl
++    curl
++    brotli
++    libkrb5
++    libssh2
++    zstd
++    libunistring
++    libidn2
++    libpsl
++    nghttp2
++    libuuid
++    keyutils
++    e2fsprogs
++
++    qt6.qtbase
++    qt6.qtsvg
++    freetype
++    fontconfig
++    harfbuzz
++    icu
++    libpng
++    libxkbcommon
++    dbus
++    glib
++    expat
++    systemdLibs
++    liburing
++    libGL
++    libglvnd
++    bzip2
++    zlib
++    libb2
++    double-conversion
++    pcre2
++    md4c
++    graphite2
++
++    xorg.libX11
++    xorg.libXext
++    xorg.libXau
++    xorg.libXdmcp
++    xorg.libxcb
++    xorg.libSM
++    xorg.libICE
++  ] ++ lib.optional (libnghttp3 != null) libnghttp3
++    ++ lib.optional (ngtcp2 != null) ngtcp2;
++
++  dontUnpack = true;
++  dontConfigure = true;
++  dontBuild = true;
++  dontWrapQtApps = true;
++
++  installPhase = ''
++    runHook preInstall
++
++    mkdir -p "$out"
++
++    # Dependencies for the linux-x64 install.
++    # Excludes mac/win/aarch64 binaries.
++    cp -r "$src/files/bin/pc_linux64" "$out/bin/"
++    cp -r "$src/files/demo"     "$out/demo"
++    cp -r "$src/files/licenses" "$out/licenses"
++    cp -r "$src/files/fonts"    "$out/fonts"
++    cp -r "$src/files/pdf"      "$out/pdf"
++
++    # Front-end configuration blobs and the autostart script.
++    for f in "$src"/files/*.t32 "$src"/files/autostart.cmm; do
++      cp "$f" "$out/"
++    done
++
++    chmod -R u+w "$out"
++
++    # Intel Trace Hub x64 demo binaries have been removed because they
++    # link against packages that nixpkgs does not carry.
++    rm -rf "$out/demo/x64/ith"
++
++    # writable tmp dir used by t32 for state.
++    mkdir -p "$out/tmp"
++    chmod 0777 "$out/tmp"
++
++    # udev rules for the LB debug hardware.
++    mkdir -p "$out/lib/udev/rules.d"
++    cp "$src/files/bin/pc_linux64/udev.conf/kernel_starting_4.14/10-lauterbach.rules" \
++       "$out/lib/udev/rules.d/"
++    cp "$src/files/bin/pc_linux64/udev.conf/kernel_starting_4.14/10-lauterbach_target.rules" \
++       "$out/lib/udev/rules.d/"
++
++    # Default config so `t32marm` works if launched without -c.
++    cat > "$out/config.t32" <<CONFIG
++    ; Auto-generated by tools/t32/trace32.nix
++    OS=
++    SYS=$out
++    TMP=$out/tmp
++
++    PBI=
++    USB
++    CONNECTIONMODE=AUTOCONNECT
++    CONFIG
++
++    runHook postInstall
++  '';
++
++  postFixup = ''
++    for bin in "$out/bin"/t32m*; do
++      case "$bin" in *.so|*.so.*|*/t32marm64) continue;; esac
++      [ -x "$bin" ] || continue
++      wrapProgram "$bin" \
++        --set-default T32SCREENSO t32screenqt6.so \
++        --prefix QT_PLUGIN_PATH : "${qt6.qtbase}/lib/qt-6/plugins" \
++        --prefix QT_QPA_PLATFORM_PLUGIN_PATH : "${qt6.qtbase}/lib/qt-6/plugins/platforms"
++    done
++  '';
++
++  autoPatchelfIgnoreMissingDeps = [
++    "t32cadi.so.1"
++    "t32caditrace.so"
++    "t32cevadislink.so"
++    "t32iris.so"
++    "t32screenqt5.so"
++    "t32screenqt6.so"
++    "t32_tas_api.so"
++    "libusb-1.0.so"
++    "bmcmci.so"
++    "hostmci.so"
++
++    "libXxf86vm.so.1"
++    "libgtk-3.so.0"
++    "libgdk-3.so.0"
++    "libatk-1.0.so.0"
++    "libpangocairo-1.0.so.0"
++    "libgdk_pixbuf-2.0.so.0"
++    "libcairo-gobject.so.2"
++    "libcairo.so.2"
++    "libpangoft2-1.0.so.0"
++    "libpango-1.0.so.0"
++
++    "libQt5PrintSupport.so.5"
++    "libQt5Svg.so.5"
++    "libQt5Widgets.so.5"
++    "libQt5Gui.so.5"
++    "libQt5Core.so.5"
++  ];
++
++  meta = with lib; {
++    description = "Lauterbach TRACE32 debugger";
++    homepage = "https://www.lauterbach.com";
++    license = licenses.unfree;
++    platforms = [ "x86_64-linux" ];
++    mainProgram = "t32marm";
++  };
++}
+diff --git a/tools/toolchain/cpp/BUILD.bazel b/tools/toolchain/cpp/BUILD.bazel
+index ca3b85940..98694040c 100644
+--- a/tools/toolchain/cpp/BUILD.bazel
++++ b/tools/toolchain/cpp/BUILD.bazel
+@@ -26,6 +26,26 @@ bzl_library(
+     srcs = ["yocto_toolchain.bzl"],
+ )
+ 
++# Constraints
++constraint_setting(name = "soc")
++
++constraint_value(
++    name = "s32g399a",
++    constraint_setting = ":soc",
++)
++
++constraint_setting(name = "cpu_cluster")
++
++constraint_value(
++    name = "cortex_a53",
++    constraint_setting = ":cpu_cluster",
++)
++
++constraint_value(
++    name = "cortex_m7",
++    constraint_setting = ":cpu_cluster",
++)
++
+ # GCC toolchain defined in the development image which is used in GitLab CI
+ # unit and integration testing
+ # https://gitlab.exploration.ninja/nyx-earth/flight-software/development-docker
+@@ -37,20 +57,23 @@ platform(
+     ],
+ )
+ 
+-# An additional constraint is needed to identify the SoC
+-constraint_setting(name = "soc")
+-
+-constraint_value(
+-    name = "s32g399a",
+-    constraint_setting = ":soc",
+-)
+-
+ platform(
+-    name = "rdb3",
++    name = "rdb3_a53",
+     constraint_values = [
+         "@platforms//os:linux",
+         "@platforms//cpu:aarch64",
+-        "@//tools/toolchain/cpp:s32g399a",
++        ":s32g399a",
++        ":cortex_a53",
++    ],
++)
++
++platform(
++    name = "rdb3_m7",
++    constraint_values = [
++        "@platforms//os:none",
++        "@platforms//cpu:armv7e-m",
++        ":s32g399a",
++        ":cortex_m7",
+     ],
+ )
+ 
+diff --git a/tools/toolchain/cpp/arm_gnu_m7_BUILD.tmpl b/tools/toolchain/cpp/arm_gnu_m7_BUILD.tmpl
+new file mode 100644
+index 000000000..7a975f793
+--- /dev/null
++++ b/tools/toolchain/cpp/arm_gnu_m7_BUILD.tmpl
+@@ -0,0 +1,51 @@
++# (c) The Exploration Company
++# Auto-generated by download_arm_gnu_m7_toolchain — do not edit.
++
++load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
++load(":{{toolchain_name}}_config.bzl", _arm_gnu_m7_toolchain_config = "cc_toolchain_config")
++
++package(default_visibility = ["//visibility:public"])
++
++filegroup(
++    name = "all_files",
++    srcs = glob(
++        [
++            "bin/**",
++            "arm-none-eabi/**",
++            "lib/**",
++            "libexec/**",
++        ],
++        allow_empty = False,
++    ),
++)
++
++# =========================== Arm GNU M7 toolchain =========================== #
++
++_arm_gnu_m7_toolchain_config(name = "{{toolchain_name}}_config")
++
++cc_toolchain(
++    name = "{{toolchain_name}}_cc",
++    all_files = ":all_files",
++    compiler_files = ":all_files",
++    dwp_files = ":all_files",
++    linker_files = ":all_files",
++    objcopy_files = ":all_files",
++    strip_files = ":all_files",
++    supports_param_files = 0,
++    toolchain_config = ":{{toolchain_name}}_config",
++    toolchain_identifier = "{{toolchain_name}}-toolchain",
++)
++
++toolchain(
++    name = "{{toolchain_name}}",
++    exec_compatible_with = [
++        "@platforms//os:linux",
++        "@platforms//cpu:{{bazel_arch}}",
++    ],
++    target_compatible_with = [
++        "@platforms//os:none",
++        "@platforms//cpu:armv7e-m",
++    ],
++    toolchain = ":{{toolchain_name}}_cc",
++    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
++)
+diff --git a/tools/toolchain/cpp/arm_gnu_m7_config.bzl.tmpl b/tools/toolchain/cpp/arm_gnu_m7_config.bzl.tmpl
+new file mode 100644
+index 000000000..ee0fe3788
+--- /dev/null
++++ b/tools/toolchain/cpp/arm_gnu_m7_config.bzl.tmpl
+@@ -0,0 +1,139 @@
++# (c) The Exploration Company
++# Auto-generated by download_arm_gnu_m7_toolchain — do not edit.
++
++load("@rules_cc//cc:cc_toolchain_config_lib.bzl", "feature", "flag_group", "flag_set", "tool_path")
++load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
++load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
++load("@//tools/toolchain/cpp:common_defs.bzl", "C_COMPILE_ACTIONS", "CPP_ASSEMBLE_ACTIONS", "CPP_COMPILE_ACTIONS", "CPP_LINK_ACTIONS")
++
++_TOOL_PREFIX = "{{repo_path}}/bin/arm-none-eabi-"
++
++_M7_CPU_FLAGS = [
++    "-mcpu=cortex-m7",
++    "-mthumb",
++    "-mfpu=fpv5-d16",
++    "-mfloat-abi=hard",
++    "-mlittle-endian",
++]
++
++def _impl(ctx):
++    tool_paths = [
++        tool_path(name = "gcc",     path = _TOOL_PREFIX + "gcc"),
++        tool_path(name = "g++",     path = _TOOL_PREFIX + "g++"),
++        tool_path(name = "cpp",     path = _TOOL_PREFIX + "cpp"),
++        tool_path(name = "ar",      path = _TOOL_PREFIX + "ar"),
++        tool_path(name = "nm",      path = _TOOL_PREFIX + "nm"),
++        tool_path(name = "ld",      path = _TOOL_PREFIX + "ld"),
++        tool_path(name = "as",      path = _TOOL_PREFIX + "as"),
++        tool_path(name = "objdump", path = _TOOL_PREFIX + "objdump"),
++        tool_path(name = "objcopy", path = _TOOL_PREFIX + "objcopy"),
++        tool_path(name = "strip",   path = _TOOL_PREFIX + "strip"),
++        tool_path(name = "gcov",    path = _TOOL_PREFIX + "gcov"),
++        tool_path(name = "dwp",     path = "/bin/false"),
++    ]
++
++    # Discovered by: arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16
++    #                  -mfloat-abi=hard -xc++ -E -v -
++    include_dirs = {{include_dirs}}
++
++    features = [
++        feature(
++            name = "m7_cpu",
++            enabled = True,
++            flag_sets = [
++                flag_set(
++                    actions = CPP_COMPILE_ACTIONS + C_COMPILE_ACTIONS + CPP_ASSEMBLE_ACTIONS,
++                    flag_groups = [flag_group(flags = _M7_CPU_FLAGS)],
++                ),
++                flag_set(
++                    actions = CPP_LINK_ACTIONS,
++                    flag_groups = [flag_group(flags = _M7_CPU_FLAGS)],
++                ),
++            ],
++        ),
++        feature(
++            name = "gc_sections",
++            enabled = True,
++            flag_sets = [
++                flag_set(
++                    actions = CPP_COMPILE_ACTIONS + C_COMPILE_ACTIONS,
++                    flag_groups = [flag_group(flags = ["-ffunction-sections", "-fdata-sections"])],
++                ),
++                flag_set(
++                    actions = CPP_LINK_ACTIONS,
++                    flag_groups = [flag_group(flags = ["-Wl,--gc-sections"])],
++                ),
++            ],
++        ),
++        feature(
++            name = "newlib_nano",
++            enabled = True,
++            flag_sets = [
++                flag_set(
++                    actions = CPP_LINK_ACTIONS,
++                    flag_groups = [flag_group(flags = ["-specs=nano.specs", "-specs=nosys.specs"])],
++                ),
++            ],
++        ),
++        feature(name = "pic", enabled = False, flag_sets = []),
++        feature(
++            name = "dbg",
++            flag_sets = [flag_set(
++                actions = CPP_COMPILE_ACTIONS + C_COMPILE_ACTIONS,
++                flag_groups = [flag_group(flags = ["-O0", "-g3"])],
++            )],
++        ),
++        feature(
++            name = "fastbuild",
++            flag_sets = [flag_set(
++                actions = CPP_COMPILE_ACTIONS + C_COMPILE_ACTIONS,
++                flag_groups = [flag_group(flags = ["-O1"])],
++            )],
++        ),
++        feature(
++            name = "opt",
++            flag_sets = [flag_set(
++                actions = CPP_COMPILE_ACTIONS + C_COMPILE_ACTIONS,
++                flag_groups = [flag_group(flags = ["-O2", "-DNDEBUG"])],
++            )],
++        ),
++        feature(
++            name = "cpp_version",
++            enabled = True,
++            flag_sets = [flag_set(
++                actions = CPP_COMPILE_ACTIONS,
++                flag_groups = [flag_group(flags = ["-std=c++17"])],
++            )],
++        ),
++        feature(
++            name = "warnings",
++            enabled = True,
++            flag_sets = [flag_set(
++                actions = CPP_COMPILE_ACTIONS + C_COMPILE_ACTIONS,
++                flag_groups = [flag_group(flags = ["-Wall"])],
++            )],
++        ),
++    ]
++
++    return cc_common.create_cc_toolchain_config_info(
++        ctx = ctx,
++        toolchain_identifier = "{{toolchain_name}}-{{gcc_version}}",
++        compiler = "arm-none-eabi-gcc",
++        host_system_name = "local",
++        target_system_name = "arm-none-eabi",
++        target_cpu = "armv7e-m",
++        target_libc = "newlib",
++        abi_version = "eabi",
++        abi_libc_version = "newlib",
++        make_variables = [],
++        tool_paths = tool_paths,
++        features = features,
++        action_configs = [],
++        cxx_builtin_include_directories = include_dirs,
++    )
++
++cc_toolchain_config = rule(
++    implementation = _impl,
++    attrs = {},
++    provides = [CcToolchainConfigInfo],
++)
+diff --git a/tools/toolchain/cpp/arm_gnu_m7_toolchain.bzl b/tools/toolchain/cpp/arm_gnu_m7_toolchain.bzl
+new file mode 100644
+index 000000000..dc73d1303
+--- /dev/null
++++ b/tools/toolchain/cpp/arm_gnu_m7_toolchain.bzl
+@@ -0,0 +1,106 @@
++"""(c) The Exploration Company.
++
++Downloads and configures the Arm GNU bare-metal toolchain for the Cortex-M7 target.
++Procures the binary from arm published binaries as a function of the
++host architecture.
++"""
++
++load("//tools/toolchain/cpp:probe.bzl", "probe_builtin_include_dirs")
++
++_ARCH_TO_ARM_HOST = {
++    "aarch64": "aarch64",
++    "amd64": "x86_64",
++    "arm64": "aarch64",
++    "x86_64": "x86_64",
++}
++
++_ARCH_TO_BAZEL_CPU = {
++    "aarch64": "aarch64",
++    "amd64": "x86_64",
++    "arm64": "aarch64",
++    "x86_64": "x86_64",
++}
++
++_M7_PROBE_FLAGS = [
++    "-mcpu=cortex-m7",
++    "-mthumb",
++    "-mfpu=fpv5-d16",
++    "-mfloat-abi=hard",
++]
++
++def _download_arm_gnu_m7_toolchain(rctx):
++    host_arch = rctx.os.arch
++    arm_host = _ARCH_TO_ARM_HOST.get(host_arch)
++    bazel_cpu = _ARCH_TO_BAZEL_CPU.get(host_arch)
++    if not arm_host:
++        fail("Unsupported host architecture for arm gnu toolchain: '{}'. Supported: {}".format(
++            host_arch,
++            list(_ARCH_TO_ARM_HOST.keys()),
++        ))
++
++    sha256 = rctx.attr.sha256.get(arm_host)
++    if not sha256:
++        fail("Missing sha256 for host '{}'. Provided keys: {}".format(arm_host, list(rctx.attr.sha256.keys())))
++
++    tarball_stem = "arm-gnu-toolchain-{version}-{host}-arm-none-eabi".format(
++        version = rctx.attr.version,
++        host = arm_host,
++    )
++    url = "{base}/{version}/binrel/{stem}.tar.xz".format(
++        base = rctx.attr.base_url,
++        version = rctx.attr.version,
++        stem = tarball_stem,
++    )
++
++    rctx.download_and_extract(
++        url = url,
++        sha256 = sha256,
++        stripPrefix = tarball_stem,
++    )
++
++    gcc_path = str(rctx.path("bin/arm-none-eabi-gcc"))
++
++    ver_result = rctx.execute([gcc_path, "-dumpversion"])
++    if ver_result.return_code != 0:
++        fail("Failed to query arm-none-eabi-gcc version: " + ver_result.stderr)
++    gcc_version = ver_result.stdout.strip()
++
++    include_dirs = probe_builtin_include_dirs(rctx, gcc_path, probe_flags = _M7_PROBE_FLAGS)
++
++    substitutions = {
++        "{{bazel_arch}}": bazel_cpu,
++        "{{gcc_version}}": gcc_version,
++        "{{include_dirs}}": repr(include_dirs),
++        "{{repo_path}}": str(rctx.path("")),
++        "{{toolchain_name}}": rctx.attr.toolchain_name,
++    }
++
++    rctx.template(
++        "BUILD.bazel",
++        Label("//tools/toolchain/cpp:arm_gnu_m7_BUILD.tmpl"),
++        substitutions = substitutions,
++    )
++    rctx.template(
++        rctx.attr.toolchain_name + "_config.bzl",
++        Label("//tools/toolchain/cpp:arm_gnu_m7_config.bzl.tmpl"),
++        substitutions = substitutions,
++    )
++
++download_arm_gnu_m7_toolchain = repository_rule(
++    implementation = _download_arm_gnu_m7_toolchain,
++    attrs = {
++        "base_url": attr.string(
++            default = "https://developer.arm.com/-/media/Files/downloads/gnu",
++            doc = "Base URL of the Arm GNU toolchain release directory.",
++        ),
++        "sha256": attr.string_dict(
++            mandatory = True,
++            doc = "SHA256 of the tarball, keyed by Arm host ('x86_64', 'aarch64').",
++        ),
++        "toolchain_name": attr.string(mandatory = True),
++        "version": attr.string(
++            mandatory = True,
++            doc = "Arm GNU toolchain version, e.g. '15.2.rel1'.",
++        ),
++    },
++)
+diff --git a/tools/toolchain/cpp/cpp.MODULE.bazel b/tools/toolchain/cpp/cpp.MODULE.bazel
+index 7e5ebb05e..07b32119f 100644
+--- a/tools/toolchain/cpp/cpp.MODULE.bazel
++++ b/tools/toolchain/cpp/cpp.MODULE.bazel
+@@ -4,6 +4,8 @@ bazel_dep(name = "rules_cc", version = "0.2.18")
+ 
+ download_yocto_toolchain = use_repo_rule("//tools/toolchain/cpp:yocto_toolchain.bzl", "download_yocto_toolchain")
+ 
++download_arm_gnu_m7_toolchain = use_repo_rule("//tools/toolchain/cpp:arm_gnu_m7_toolchain.bzl", "download_arm_gnu_m7_toolchain")
++
+ # The order in which the toolchain are registers matters. Registration order = priority
+ # A toolchain is matched with the target platform if all its constraints are present in the platform.
+ # This means that more specific toolchains must be registered first.
+@@ -26,6 +28,19 @@ download_yocto_toolchain(
+     },
+ )
+ 
++# Arm gnu bare-metal toolchain for Cortex M7
++download_arm_gnu_m7_toolchain(
++    name = "arm_gnu_m7_toolchain_repo",
++    sha256 = {
++        "aarch64": "d061559d814b205ed30c5b7c577c03317ec447ca51cd5a159d26b12a5bbeb20c",
++        "x86_64": "597893282ac8c6ab1a4073977f2362990184599643b4c5ee34870a8215783a16",
++    },
++    toolchain_name = "arm_gnu_m7_toolchain",
++    version = "15.2.rel1",
++)
++
++register_toolchains("@arm_gnu_m7_toolchain_repo//:arm_gnu_m7_toolchain")
++
+ # dev linux gcc
+ register_toolchains("//tools/toolchain/cpp:dev_gcc_toolchain")
+ 
+diff --git a/tools/toolchain/cpp/probe.bzl b/tools/toolchain/cpp/probe.bzl
+new file mode 100644
+index 000000000..f75e5697c
+--- /dev/null
++++ b/tools/toolchain/cpp/probe.bzl
+@@ -0,0 +1,65 @@
++# (c) The Exploration Company
++
++"""Probe a C/C++ compiler for its built-in include search paths.
++
++Referenced from rules_cc/cc/private/toolchain/unix_cc_configure.bzl
++where a similar implementation is used to auto-configure the host toolchain.
++The returned paths feed cxx_builtin_include_directories on
++create_cc_toolchain_config_info.
++"""
++
++_START_MARKER = "#include <...> search starts here:"
++_END_MARKER = "End of search list."
++
++def probe_builtin_include_dirs(rctx, cc_path, probe_flags = [], language = "c++"):
++    """Return the built-in include directories reported by cc_path.
++
++    Multilib toolchains report different paths depending on configuraiton flags,
++    so the passed probe_flags are used to call the tool provided by cc_path
++    with the expected ones flags.
++
++    Args:
++      rctx: Repository rule context.
++      cc_path: Absolute path to the compiler.
++      probe_flags: Extra flags to pass on to the probe command line.
++      language: "c" or "c++". Selects -xc vs -xc++. Defaults to
++        "c++", which returns the union of C and C++ search paths.
++
++    Returns:
++      List of absolute include directory paths in the order the compiler
++      reports.
++
++    Fails if the compiler exits non-zero or if the search-path markers are
++    absent from stderr.
++    """
++    if language not in ("c", "c++"):
++        fail("probe_builtin_include_dirs: language must be 'c' or 'c++', got '{}'".format(language))
++
++    probe = "_cc_probe_input." + ("cc" if language == "c++" else "c")
++    rctx.file(probe, "")
++
++    args = [cc_path] + list(probe_flags) + ["-x" + language, "-E", "-v", probe]
++    result = rctx.execute(args)
++    if result.return_code != 0:
++        fail("probe_builtin_include_dirs: '{}' failed:\n{}".format(" ".join(args), result.stderr))
++
++    dirs = []
++    inside = False
++    for line in result.stderr.splitlines():
++        if _START_MARKER in line:
++            inside = True
++            continue
++        if inside and _END_MARKER in line:
++            break
++        if inside:
++            d = line.strip()
++            if d:
++                dirs.append(d)
++
++    if not dirs:
++        fail("probe_builtin_include_dirs: no include dirs parsed from output of:\n{}\nstderr:\n{}".format(
++            " ".join(args),
++            result.stderr,
++        ))
++
++    return dirs
+diff --git a/tools/toolchain/cpp_nix/gcc/toolchain.bzl b/tools/toolchain/cpp_nix/gcc/toolchain.bzl
+index 935cac4a0..b6cfa07f8 100644
+--- a/tools/toolchain/cpp_nix/gcc/toolchain.bzl
++++ b/tools/toolchain/cpp_nix/gcc/toolchain.bzl
+@@ -17,43 +17,9 @@ Enable in .bazelrc:
+     build:nix --extra_toolchains=@nix_gcc_toolchain_repo//:nix_gcc_toolchain
+ """
+ 
++load("//tools/toolchain/cpp:probe.bzl", "probe_builtin_include_dirs")
+ load("//tools/toolchain/cpp_nix:get_tool.bzl", "get_tool")
+ 
+-def _get_gcc_include_dirs(rctx, gcc_path):
+-    """Return the list of GCC built-in include directories."""
+-    probe_source = "_nix_toolchain_probe.cc"
+-    rctx.file(probe_source, "")
+-
+-    result = rctx.execute([
+-        gcc_path,
+-        "-xc++",
+-        "-E",
+-        "-v",
+-        probe_source,
+-    ])
+-
+-    output = result.stderr
+-    if result.return_code != 0:
+-        fail("Failed to query GCC built-in include directories with '{}'. stderr:\n{}".format(gcc_path, output))
+-
+-    dirs = []
+-    found = False
+-    for line in output.splitlines():
+-        if "#include <...> search starts here:" in line:
+-            found = True
+-            continue
+-        if found and "End of search list." in line:
+-            break
+-        if found:
+-            d = line.strip()
+-            if d:
+-                dirs.append(d)
+-
+-    if not dirs:
+-        fail("Could not parse GCC include directories from '{}' output".format(gcc_path))
+-
+-    return dirs
+-
+ def _nix_cc_autoconf_impl(rctx):
+     """Detect the system GCC and emit toolchain BUILD + config files."""
+ 
+@@ -83,7 +49,7 @@ def _nix_cc_autoconf_impl(rctx):
+     gcc_version = ver_result.stdout.strip().split(".")[0]
+ 
+     # Collect builtin include directories
+-    include_dirs = _get_gcc_include_dirs(rctx, gcc_path)
++    include_dirs = probe_builtin_include_dirs(rctx, gcc_path)
+ 
+     substitutions = {
+         "{{ar_path}}": ar_path,
+diff --git a/tools/toolchain/cpp_nix/goto/toolchain.bzl b/tools/toolchain/cpp_nix/goto/toolchain.bzl
+index 0fe6d6c62..9c86801e4 100644
+--- a/tools/toolchain/cpp_nix/goto/toolchain.bzl
++++ b/tools/toolchain/cpp_nix/goto/toolchain.bzl
+@@ -17,46 +17,9 @@ Enable in .bazelrc:
+     build:nix-goto --extra_toolchains=@nix_goto_toolchain_repo//:nix_goto_toolchain
+ """
+ 
++load("//tools/toolchain/cpp:probe.bzl", "probe_builtin_include_dirs")
+ load("//tools/toolchain/cpp_nix:get_tool.bzl", "get_tool")
+ 
+-def _get_gcc_include_dirs(rctx, gcc_path):
+-    """Return the list of GCC built-in include directories.
+-
+-    goto-cc wraps GCC and uses the same headers, so we probe gcc directly.
+-    """
+-    probe_source = "_nix_toolchain_probe.cc"
+-    rctx.file(probe_source, "")
+-
+-    result = rctx.execute([
+-        gcc_path,
+-        "-xc++",
+-        "-E",
+-        "-v",
+-        probe_source,
+-    ])
+-
+-    output = result.stderr
+-    if result.return_code != 0:
+-        fail("Failed to query GCC built-in include directories with '{}'. stderr:\n{}".format(gcc_path, output))
+-
+-    dirs = []
+-    found = False
+-    for line in output.splitlines():
+-        if "#include <...> search starts here:" in line:
+-            found = True
+-            continue
+-        if found and "End of search list." in line:
+-            break
+-        if found:
+-            d = line.strip()
+-            if d:
+-                dirs.append(d)
+-
+-    if not dirs:
+-        fail("Could not parse GCC include directories from '{}' output".format(gcc_path))
+-
+-    return dirs
+-
+ def _nix_goto_cc_autoconf_impl(rctx):
+     """Detect goto-cc and supporting tools, emit toolchain BUILD + config files."""
+ 
+@@ -88,7 +51,8 @@ def _nix_goto_cc_autoconf_impl(rctx):
+     gcc_version = ver_result.stdout.strip().split(".")[0]
+ 
+     # Collect builtin include directories
+-    include_dirs = _get_gcc_include_dirs(rctx, gcc_path)
++    # goto-cc wraps gcc and shares its headers, so probe gcc directly.
++    include_dirs = probe_builtin_include_dirs(rctx, gcc_path)
+ 
+     substitutions = {
+         "{{ar_path}}": ar_path,

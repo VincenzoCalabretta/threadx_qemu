@@ -1,0 +1,28 @@
+# (c) The Exploration Company
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "rdb3_m7_hello",
+    srcs = [
+        "src/main.c",
+        "src/clock.c",
+        "src/pinmux.c",
+        "src/uart.c",
+        "src/startup.S",
+        "src/s32g3_regs.h",
+    ],
+    linkopts = [
+        "-T$(location :ld/m7_sram.ld)",
+        "-nostartfiles",
+        "-Wl,-Map=$(@D)/rdb3_m7_hello.map",
+    ],
+    additional_linker_inputs = ["ld/m7_sram.ld"],
+    target_compatible_with = [
+        "@platforms//os:none",
+        "@platforms//cpu:armv7e-m",
+        "//tools/toolchain/cpp:s32g399a",
+        "//tools/toolchain/cpp:cortex_m7",
+    ],
+    visibility = ["//visibility:public"],
+)

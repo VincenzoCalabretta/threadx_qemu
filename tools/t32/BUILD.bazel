@@ -1,0 +1,7 @@
+# (c) The Exploration Company
+
+sh_binary(
+    name = "t32_run_under",
+    srcs = ["t32_run_under.sh"],
+    visibility = ["//visibility:public"],
+)
