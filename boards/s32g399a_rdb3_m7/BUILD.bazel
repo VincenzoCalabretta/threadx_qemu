@@ -1,0 +1,28 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Port of the app/board.h interface to the S32G399A M7_0 core on the
+# NXP S32G-VNP-RDB3 board. Symbols get pulled in via main.o's references
+# (board_init/uart_init/uart_puts) which in turn pull clock.o/pinmux.o from
+# this archive — no alwayslink needed.
+cc_library(
+    name = "board",
+    srcs = [
+        "board.c",
+        "board_internal.h",
+        "clock.c",
+        "pinmux.c",
+        "s32g3_regs.h",
+        "uart.c",
+    ],
+    deps = [
+        "//app:board_api",
+        "//boards/common:startup",
+    ],
+    visibility = ["//app:__pkg__"],
+)
+
+filegroup(
+    name = "linker_script",
+    srcs = ["m7_sram.ld"],
+    visibility = ["//app:__pkg__"],
+)

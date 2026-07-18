@@ -1,13 +1,20 @@
 /*
- * Minimal ARMv7-M startup for QEMU mps2-an500.
+ * ARMv7-M reset stub, shared across all boards in this project.
  *
- * QEMU's `-kernel` loads the ELF according to its program headers and starts
- * execution from the reset vector at .vectors[1]. .vectors is placed at
- * address 0x00000000 by the linker script.
+ * Both supported boards (QEMU mps2-an500 and S32G399A M7_0) are Cortex-M7
+ * cores that start execution at the reset vector held in .vectors[1].
+ * .vectors[0] is the initial SP. See ARMv7-M Architecture Reference Manual
+ * ARM DDI 0403, section B1.5.2.
  *
- * Vector-table layout: ARMv7-M ARM (DDI 0403) section B1.5.2.
- * VTOR write is not strictly needed since the table sits at 0 already, but
- * we do it anyway so the code survives being relinked at a non-zero base.
+ * The linker script (per board) is responsible for placing .vectors at the
+ * address the hardware reads at reset:
+ *   QEMU mps2-an500  .vectors -> 0x00000000 (SSRAM1 boot)
+ *   S32G3 M7_0 SRAM  .vectors -> 0x34000000 (Internal SRAM), reached after the
+ *                                 T32 load script writes VTOR
+ *
+ * VTOR (Vector Table Offset Register, ARM DDI 0403 B3.2.5) is written to
+ * &_vectors so the code survives being relinked at a non-zero base — required
+ * on S32G3, harmless on QEMU where the table sits at 0 already.
  */
 
     .syntax unified

@@ -6,7 +6,7 @@
 #
 # Usage (via Bazel):
 #   bazel run --run_under=//tools/t32:t32_run_under //target:binary
-#   bazel run --config=m7_debug //rdb3_bringup_src:rdb3_m7_hello
+#   bazel run --config=m7_debug //app:hello_s32
 #
 # Bazel passes the built binary path as the last argument.
 # We extract it and pass it to t32-run which sets T32_ELF_PATH for load.cmm.

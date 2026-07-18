@@ -1,4 +1,5 @@
 #include "s32g3_regs.h"
+#include "board_internal.h"
 
 /*
  * Set MC_CGM_0 clock mux 8 LIN_BAUD_CLK feeder to FIRC = 48 MHz.

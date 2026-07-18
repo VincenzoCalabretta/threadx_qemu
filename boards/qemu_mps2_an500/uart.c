@@ -1,4 +1,5 @@
-#include "uart.h"
+#include "app/board.h"
+#include "uart_regs.h"
 
 void uart_init(void)
 {
@@ -7,7 +8,7 @@ void uart_init(void)
     UART_CTRL = UART_CTRL_TXEN;
 }
 
-void uart_putc(char c)
+static void uart_putc(char c)
 {
     while (UART_STATE & UART_STATE_TXFULL) { }
     UART_DATA = (uint32_t)(unsigned char)c;

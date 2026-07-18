@@ -1,3 +1,4 @@
+#include "app/board.h"
 #include "s32g3_regs.h"
 
 /*
@@ -21,7 +22,7 @@
 void uart_init(void)
 {
     LINCR1  = LINCR1_RESERVED_1 | LINCR1_INIT;
-    UARTCR  = UARTCR_UART; 
+    UARTCR  = UARTCR_UART;
     UARTCR  = UARTCR_UART | UARTCR_WL0
             | UARTCR_TxEn | UARTCR_RxEn;
     LINIBRR = 26;
@@ -29,7 +30,7 @@ void uart_init(void)
     LINCR1  = LINCR1_RESERVED_1;
 }
 
-void uart_putc(char c)
+static void uart_putc(char c)
 {
     BDRL = (uint32_t)(uint8_t)c;
     while ((UARTSR & UARTSR_DTFTFF) == 0) { }

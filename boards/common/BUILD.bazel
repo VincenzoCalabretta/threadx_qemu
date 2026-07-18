@@ -1,0 +1,10 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Shared ARMv7-M reset stub. The board's linker script contains
+# ENTRY(_reset), which the linker treats as `-u _reset` — that alone is
+# enough to pull startup.o out of this archive; no alwayslink required.
+cc_library(
+    name = "startup",
+    srcs = ["startup.S"],
+    visibility = ["//boards:__subpackages__"],
+)

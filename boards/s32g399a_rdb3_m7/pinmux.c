@@ -1,4 +1,5 @@
 #include "s32g3_regs.h"
+#include "board_internal.h"
 
 /*
  * RDB3 UART0 USB port physical wiring
@@ -12,7 +13,7 @@
  *   PB_00..PB_15 = 16..31, so PC_09 = 32 + 9 = 41, PC_10 = 42.
  *
  *   This is confirmed by BootROM's serial-boot UART assignment
- *   REF: RM 31.12.4.1 Table 179 p1351 "RX = PAD[42], TX = PAD[41], LINFlexD_0 
+ *   REF: RM 31.12.4.1 Table 179 p1351 "RX = PAD[42], TX = PAD[41], LINFlexD_0
  *        in UART mode."
  *
  * Alternate function values  taken from the S32G3_IOMUX.xlsx embedded in

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `bazel run --config=qemu //src:hello` invokes this script with the ELF
+# `bazel run --config=qemu //app:hello_qemu` invokes this script with the ELF
 # path as the first argument. The nix devShell exports NIX_QEMU_BIN, which
 # points at qemu-system-arm inside the nix store — no host PATH lookup.
 set -euo pipefail

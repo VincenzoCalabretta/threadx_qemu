@@ -7,7 +7,7 @@ build --incompatible_enable_cc_toolchain_resolution
 # @arm_gnu_m7_toolchain_repo//:arm_gnu_m7_toolchain (registered in MODULE.bazel).
 build:qemu --platforms=//tools/toolchain/cpp:qemu_mps2_an500_m7
 
-# `bazel run --config=qemu //src:hello` launches qemu-system-arm on the ELF.
+# `bazel run --config=qemu //app:hello_qemu` launches qemu-system-arm on the ELF.
 # `run:` config inherits `build:` of the same name automatically, so declaring
 # --platforms under build:qemu is enough for the build side.
 run:qemu --run_under=//tools/qemu:qemu_run
@@ -16,7 +16,7 @@ run:qemu --run_under=//tools/qemu:qemu_run
 build:rdb3 --platforms=//tools/toolchain/cpp:rdb3_a53 --extra_toolchains=@cortexa53_fsl_linux_gcc_toolchain//:dev_cortexa53_fsl_linux_gcc_toolchain
 
 # M7 debugging with Lauterbach T32 on rdb3 hardware.
-# Usage: bazel run --config=m7_debug //rdb3_bringup_src:rdb3_m7_hello
+# Usage: bazel run --config=m7_debug //app:hello_s32
 build:m7_debug --platforms=//tools/toolchain/cpp:rdb3_m7
 # `run:m7_debug` inherits `build:m7_debug` automatically.
 run:m7_debug --run_under=//tools/t32:t32_run_under

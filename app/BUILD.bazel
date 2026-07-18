@@ -1,0 +1,59 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+# Header-only interface each board port implements. Boards depend on this
+# for the app/board.h declarations without pulling in main.c.
+cc_library(
+    name = "board_api",
+    hdrs = ["board.h"],
+    visibility = ["//visibility:public"],
+)
+
+# main.c is listed directly in each cc_binary's srcs (not exported through a
+# cc_library archive). This puts main.o straight on the link line, so its
+# references to board_init / uart_init / uart_puts force the linker to pull
+# those symbols out of the per-board archive.
+#
+# ENTRY(_reset) in each board's linker script (which acts as `-u _reset`)
+# pulls the reset stub out of //boards/common:startup for the same reason.
+
+cc_binary(
+    name = "hello_qemu",
+    srcs = ["main.c"],
+    deps = [
+        ":board_api",
+        "//boards/qemu_mps2_an500:board",
+    ],
+    additional_linker_inputs = ["//boards/qemu_mps2_an500:linker_script"],
+    linkopts = [
+        "-T$(location //boards/qemu_mps2_an500:linker_script)",
+        "-nostartfiles",
+    ],
+    target_compatible_with = [
+        "@platforms//os:none",
+        "@platforms//cpu:armv7e-m",
+        "//tools/toolchain/cpp:cortex_m7",
+        "//tools/toolchain/cpp:mps2_an500",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "hello_s32",
+    srcs = ["main.c"],
+    deps = [
+        ":board_api",
+        "//boards/s32g399a_rdb3_m7:board",
+    ],
+    additional_linker_inputs = ["//boards/s32g399a_rdb3_m7:linker_script"],
+    linkopts = [
+        "-T$(location //boards/s32g399a_rdb3_m7:linker_script)",
+        "-nostartfiles",
+    ],
+    target_compatible_with = [
+        "@platforms//os:none",
+        "@platforms//cpu:armv7e-m",
+        "//tools/toolchain/cpp:s32g399a",
+        "//tools/toolchain/cpp:cortex_m7",
+    ],
+    visibility = ["//visibility:public"],
+)

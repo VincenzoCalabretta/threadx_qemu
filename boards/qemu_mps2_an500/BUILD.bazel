@@ -1,0 +1,24 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Port of the app/board.h interface to QEMU's mps2-an500 machine
+# (Cortex-M7 + CMSDK UART0). Symbols get pulled in via main.o's references
+# (board_init/uart_init/uart_puts) — no alwayslink needed.
+cc_library(
+    name = "board",
+    srcs = [
+        "board.c",
+        "uart.c",
+        "uart_regs.h",
+    ],
+    deps = [
+        "//app:board_api",
+        "//boards/common:startup",
+    ],
+    visibility = ["//app:__pkg__"],
+)
+
+filegroup(
+    name = "linker_script",
+    srcs = ["qemu_mps2_an500.ld"],
+    visibility = ["//app:__pkg__"],
+)

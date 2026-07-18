@@ -1,8 +1,8 @@
-#ifndef S32G3_REGS_H
-#define S32G3_REGS_H
+#ifndef BOARDS_S32G399A_RDB3_M7_S32G3_REGS_H
+#define BOARDS_S32G399A_RDB3_M7_S32G3_REGS_H
 
 /*
- * All addresses and bit fields on this page are taken from RM attachment 
+ * All addresses and bit fields on this page are taken from RM attachment
  * S32G3_memory_map.xlsx. (Revision 5).
  *
  * "RM x.y.z (pN)" citations use the section number and page number.

@@ -1,5 +1,5 @@
-#ifndef UART_H
-#define UART_H
+#ifndef BOARDS_QEMU_MPS2_AN500_UART_REGS_H
+#define BOARDS_QEMU_MPS2_AN500_UART_REGS_H
 
 #include <stdint.h>
 
@@ -20,9 +20,5 @@
 
 #define UART_STATE_TXFULL (1u << 0)
 #define UART_CTRL_TXEN    (1u << 0)
-
-void uart_init(void);
-void uart_putc(char c);
-void uart_puts(const char *s);
 
 #endif
