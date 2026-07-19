@@ -1,0 +1,28 @@
+# /etc/udev/rules.d/10-lauterbach.rules
+
+ACTION=="remove", GOTO="lauterbach_end"
+SUBSYSTEM!="usb", GOTO="lauterbach_end"
+
+ENV{DEVTYPE}!="usb_device", GOTO="lauterbach_end"
+ATTR{idVendor}!="0897",     GOTO="lauterbach_end"
+
+# t32usb_id sets the following environment variables
+# - $env{T32_NODENAME}
+# - $env{T32_SERIALNUMBER}
+# - $env{ID_SERIAL_SHORT}
+# - $env{ID_USB_SERIAL_SHORT}
+# these can be used in downstream rules to apply specific permissions for a device
+IMPORT{builtin}="usb_id"
+IMPORT{builtin}="path_id"
+TEST=="<path_to>/t32usb_id", \
+  IMPORT{program}="<path_to>/t32usb_id $devnode"
+
+# <apply rules for device>
+ENV{ID_SERIAL_SHORT}=="?*", SYMLINK+="lauterbach/by-id/$env{ID_BUS}-$env{ID_SERIAL_SHORT}"
+SYMLINK+="lauterbach/trace32/%k"
+MODE:="0666"
+#USER:="<USER>"
+#GROUP:="<GROUP>"
+# </apply rules for device>
+
+LABEL="lauterbach_end"
