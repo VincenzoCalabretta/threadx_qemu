@@ -4,9 +4,9 @@
  *
  *   - `__RAM_segment_used_end__` → `__bss_end` so we can reuse the linker
  *     symbols already defined in the per-board linker scripts.
- *   - SYSTICK_CYCLES fixed to a hard-coded reload; SysTick accuracy is not
- *     load-bearing for a hello world (tx_thread_sleep just needs *some*
- *     tick), so we avoid propagating per-board clock configuration here.
+ *   - SYSTICK_CYCLES derived from BOARD_CPU_HZ, a compile-time constant
+ *     each board's cc_library injects via `defines`. Keeps the per-board
+ *     clock knowledge on the board side of the app/board.h split.
  *
  * `_vectors` is provided by vectors.S in this same package.
  */
@@ -17,7 +17,11 @@
     .global     _tx_timer_interrupt
     .global     _vectors
 
-SYSTICK_CYCLES = 24000 - 1
+/* 100 Hz tick — matches ThreadX's default TX_TIMER_TICKS_PER_SECOND. */
+#ifndef BOARD_CPU_HZ
+#error "BOARD_CPU_HZ must be defined by the board (see boards/*/BUILD.bazel)"
+#endif
+SYSTICK_CYCLES = (BOARD_CPU_HZ / 100) - 1
 
     .text 32
     .align 4

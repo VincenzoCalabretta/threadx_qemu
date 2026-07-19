@@ -14,6 +14,9 @@ cc_library(
         "uart.c",
         "uart_regs.h",
     ],
+    # M7 core clock QEMU emulates for this machine. Consumed by
+    # //app/threadx_hello:tx_initialize_low_level.S to size SysTick.
+    defines = ["BOARD_CPU_HZ=25000000"],
     deps = ["//app:board_api"],
     visibility = ["//app:__subpackages__"],
 )

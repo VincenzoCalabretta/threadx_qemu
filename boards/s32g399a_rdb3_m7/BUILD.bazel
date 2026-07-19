@@ -18,6 +18,9 @@ cc_library(
         "s32g3_regs.h",
         "uart.c",
     ],
+    # M7 core clock after clock_init(): FIRC at 48 MHz. Consumed by
+    # //app/threadx_hello:tx_initialize_low_level.S to size SysTick.
+    defines = ["BOARD_CPU_HZ=48000000"],
     deps = ["//app:board_api"],
     visibility = ["//app:__subpackages__"],
 )
