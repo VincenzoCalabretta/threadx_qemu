@@ -1,5 +1,6 @@
 #include "app/board.h"
 #include "s32g3_regs.h"
+#include <rtems/bspIo.h>
 
 /*
  * LINFlexD_0 in UART mode, 115200 8N1, buffer non-FIFO mode, polled TX.
@@ -43,3 +44,7 @@ void uart_puts(const char *s)
         uart_putc(*s++);
     }
 }
+
+/* Bind //boards/common:printk's char sink to this board's polled TX. */
+BSP_output_char_function_type      BSP_output_char = uart_putc;
+BSP_polling_getchar_function_type  BSP_poll_char   = 0;

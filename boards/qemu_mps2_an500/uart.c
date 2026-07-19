@@ -1,5 +1,6 @@
 #include "app/board.h"
 #include "uart_regs.h"
+#include <rtems/bspIo.h>
 
 void uart_init(void)
 {
@@ -20,3 +21,7 @@ void uart_puts(const char *s)
         uart_putc(*s++);
     }
 }
+
+/* Bind //boards/common:printk's char sink to this board's polled TX. */
+BSP_output_char_function_type      BSP_output_char = uart_putc;
+BSP_polling_getchar_function_type  BSP_poll_char   = 0;

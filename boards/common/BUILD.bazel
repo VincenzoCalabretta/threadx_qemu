@@ -24,5 +24,56 @@ cc_library(
         "reset.S",
         "vectors_bare.S",
     ],
+    # vectors_bare.S references _ARMV7M_Exception_default in the four
+    # configurable-fault vector slots; :fault supplies the definition.
+    deps = [":fault"],
     visibility = ["//boards:__subpackages__"],
+)
+
+# printk() over a board-supplied BSP_output_char function pointer. Sources
+# are vendored from RTEMS (see file headers for copyright); each board's
+# uart.c defines BSP_output_char to point at its polled putc.
+cc_library(
+    name = "printk",
+    srcs = [
+        "printk/dumpbuf.c",
+        "printk/io_vprintf.c",
+        "printk/printk.c",
+        "printk/rtems_put_char.c",
+        "printk/rtems_putc.c",
+        "printk/vprintk.c",
+    ],
+    hdrs = [
+        "printk/include/rtems/bspIo.h",
+        "printk/include/rtems/dev/io.h",
+        "printk/include/rtems/dumpbuf.h",
+    ],
+    includes = ["printk/include"],
+    visibility = ["//boards:__subpackages__", "//app:__subpackages__"],
+)
+
+# ARMv7-M fault handler: naked-asm shim in the HardFault/MemManage/BusFault/
+# UsageFault vector slots captures the register file, then a C printer dumps
+# it via //boards/common:printk with a CFSR/HFSR/MMFAR/BFAR decode.
+# Sources are vendored from RTEMS (see file headers). The linker pulls the
+# handler out of this archive because each app's vector table references
+# _ARMV7M_Exception_default directly.
+cc_library(
+    name = "fault",
+    srcs = [
+        "fault/arm_exception_default.c",
+        "fault/arm_exception_frame_print.c",
+        "fault/armv7m_exception_default.c",
+        "fault/armv7m_faults_enable.c",
+        "fault/rtems_assert.c",
+        "fault/rtems_panic.c",
+    ],
+    hdrs = [
+        "fault/include/rtems/fatal.h",
+        "fault/include/rtems/score/armv7m.h",
+        "fault/include/rtems/score/cpu.h",
+    ],
+    includes = ["fault/include"],
+    deps = [":printk"],
+    visibility = ["//boards:__subpackages__", "//app:__subpackages__"],
 )

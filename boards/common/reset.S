@@ -48,6 +48,13 @@ _reset:
     b       3b
 4:
 
+    /* Enable MemManage / BusFault / UsageFault so they fire on their own
+     * vectors instead of always escalating to HardFault with HFSR.FORCED.
+     * All four vector slots still route to _ARMV7M_Exception_default (see
+     * vectors_bare.S); this only changes CPU_Exception_frame.vector and
+     * CFSR classification. */
+    bl      _ARMV7M_Enable_configurable_faults
+
     bl      main
     b       _hang
 

@@ -21,7 +21,10 @@ cc_library(
     # M7 core clock after clock_init(): FIRC at 48 MHz. Consumed by
     # //app/threadx_hello:tx_initialize_low_level.S to size SysTick.
     defines = ["BOARD_CPU_HZ=48000000"],
-    deps = ["//app:board_api"],
+    deps = [
+        "//app:board_api",
+        "//boards/common:printk",
+    ],
     visibility = ["//app:__subpackages__"],
 )
 
