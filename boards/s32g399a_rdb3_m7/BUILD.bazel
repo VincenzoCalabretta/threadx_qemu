@@ -4,8 +4,12 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # NXP S32G-VNP-RDB3 board. Symbols get pulled in via main.o's references
 # (board_init/uart_init/uart_puts) which in turn pull clock.o/pinmux.o from
 # this archive — no alwayslink needed.
+#
+# board_no_startup is the same peripheral code without the bare-metal
+# startup archive, so apps that supply their own vector table (e.g.
+# //app/threadx_hello) don't inherit the default one.
 cc_library(
-    name = "board",
+    name = "board_no_startup",
     srcs = [
         "board.c",
         "board_internal.h",
@@ -14,8 +18,14 @@ cc_library(
         "s32g3_regs.h",
         "uart.c",
     ],
+    deps = ["//app:board_api"],
+    visibility = ["//app:__subpackages__"],
+)
+
+cc_library(
+    name = "board",
     deps = [
-        "//app:board_api",
+        ":board_no_startup",
         "//boards/common:startup",
     ],
     visibility = ["//app:__pkg__"],
@@ -24,5 +34,5 @@ cc_library(
 filegroup(
     name = "linker_script",
     srcs = ["m7_sram.ld"],
-    visibility = ["//app:__pkg__"],
+    visibility = ["//app:__subpackages__"],
 )

@@ -1,10 +1,28 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-# Shared ARMv7-M reset stub. The board's linker script contains
-# ENTRY(_reset), which the linker treats as `-u _reset` — that alone is
-# enough to pull startup.o out of this archive; no alwayslink required.
+# Reset stub only — the C-runtime bring-up (VTOR, .data copy, .bss zero,
+# call to main). Depend on this from apps that supply their own vector
+# table (e.g. //app/threadx_hello points PendSV/SysTick at ThreadX
+# handlers).
+#
+# The board's linker script contains ENTRY(_reset), which the linker treats
+# as `-u _reset` — that alone is enough to pull reset.o out of this archive.
+cc_library(
+    name = "reset",
+    srcs = ["reset.S"],
+    visibility = ["//boards:__subpackages__", "//app:__subpackages__"],
+)
+
+# Reset stub + the default vector table (faults route to _hang). We list
+# reset.S again in srcs (rather than depending on :reset) so this archive
+# is self-contained: reset.o references `_vectors`, and the linker only
+# searches archives forward in link order, so both objects must live in
+# the same archive to resolve without --start-group.
 cc_library(
     name = "startup",
-    srcs = ["startup.S"],
+    srcs = [
+        "reset.S",
+        "vectors_bare.S",
+    ],
     visibility = ["//boards:__subpackages__"],
 )

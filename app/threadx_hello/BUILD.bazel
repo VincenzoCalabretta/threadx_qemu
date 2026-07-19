@@ -1,0 +1,63 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# Second app: same "hello world" print, but issued from a ThreadX thread.
+# vectors.S redirects PendSV/SysTick to the ThreadX Cortex-M7 port handlers,
+# and tx_initialize_low_level.S sets up SysTick + the unused-memory pointer
+# tx_application_define receives.
+#
+# We depend on //boards/common:reset (bare reset stub) rather than :startup,
+# because vectors.S here supplies its own `.vectors` section — pulling the
+# default vector table in would duplicate `_vectors`.
+
+_THREADX_HELLO_SRCS = [
+    "main.c",
+    "tx_application.c",
+    "tx_initialize_low_level.S",
+    "vectors.S",
+]
+
+_THREADX_HELLO_DEPS = [
+    "//app:board_api",
+    "//boards/common:reset",
+    "@threadx//:threadx",
+]
+
+cc_binary(
+    name = "hello_threadx_qemu",
+    srcs = _THREADX_HELLO_SRCS,
+    deps = _THREADX_HELLO_DEPS + [
+        "//boards/qemu_mps2_an500:board_no_startup",
+    ],
+    additional_linker_inputs = ["//boards/qemu_mps2_an500:linker_script"],
+    linkopts = [
+        "-T$(location //boards/qemu_mps2_an500:linker_script)",
+        "-nostartfiles",
+    ],
+    target_compatible_with = [
+        "@platforms//os:none",
+        "@platforms//cpu:armv7e-m",
+        "//tools/toolchain/cpp:cortex_m7",
+        "//tools/toolchain/cpp:mps2_an500",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "hello_threadx_s32",
+    srcs = _THREADX_HELLO_SRCS,
+    deps = _THREADX_HELLO_DEPS + [
+        "//boards/s32g399a_rdb3_m7:board_no_startup",
+    ],
+    additional_linker_inputs = ["//boards/s32g399a_rdb3_m7:linker_script"],
+    linkopts = [
+        "-T$(location //boards/s32g399a_rdb3_m7:linker_script)",
+        "-nostartfiles",
+    ],
+    target_compatible_with = [
+        "@platforms//os:none",
+        "@platforms//cpu:armv7e-m",
+        "//tools/toolchain/cpp:s32g399a",
+        "//tools/toolchain/cpp:cortex_m7",
+    ],
+    visibility = ["//visibility:public"],
+)

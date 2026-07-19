@@ -1,0 +1,4 @@
+# Package hosts the download_threadx repository rule and the BUILD template
+# that gets symlinked into the fetched ThreadX source tree.
+
+exports_files(["threadx.BUILD"])

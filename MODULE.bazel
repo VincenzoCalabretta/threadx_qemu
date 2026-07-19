@@ -22,3 +22,14 @@ download_arm_gnu_m7_toolchain(
 )
 
 register_toolchains("@arm_gnu_m7_toolchain_repo//:arm_gnu_m7_toolchain")
+
+download_threadx = use_repo_rule(
+    "//third_party/threadx:threadx.bzl",
+    "download_threadx",
+)
+
+download_threadx(
+    name = "threadx",
+    sha256 = "54acb52d9392eed59d1df00cba5ce4976eef63e07c286132b6f71ff84cda618d",
+    version = "6.4.1",
+)
